@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Let's Farm Auto</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌾</text></svg>" />
+  </head>
+  <body>
+    <div class="grain"></div>
+    <header class="top">
+      <div>
+        <p class="eyebrow">BlueStacks · Let's Farm</p>
+        <h1>Auto nông trại</h1>
+      </div>
+      <div class="top-status">
+        <span id="device-pill" class="pill">Mô phỏng</span>
+        <span id="run-pill" class="pill idle">Đang nghỉ</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="stage">
+        <div class="stage-head">
+          <h2>Màn hình ruộng</h2>
+          <p id="hint">Bot tự tìm ô ruộng và túi hạt giống trên ảnh — không cần căn lưới.</p>
+        </div>
+        <div class="viewport" id="viewport">
+          <img id="frame" alt="Ảnh nông trại" />
+          <canvas id="draw"></canvas>
+          <div id="empty-frame" class="empty-frame">Chưa có ảnh — nhấn Quét thử</div>
+        </div>
+        <div class="legend">
+          <span><i class="swatch empty"></i> Trống</span>
+          <span><i class="swatch growing"></i> Đang lớn</span>
+          <span><i class="swatch ready"></i> Chín / thu hoạch</span>
+          <span><i class="swatch swipe"></i> Đường kéo</span>
+        </div>
+        <div class="stats" id="stats">
+          <div><strong id="stat-ready">0</strong> sẵn</div>
+          <div><strong id="stat-growing">0</strong> đang lớn</div>
+          <div><strong id="stat-empty">0</strong> trống</div>
+          <div><strong id="stat-cycles">0</strong> vòng</div>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <section class="card">
+          <h3>Kết nối</h3>
+          <p class="muted">
+            Bật ADB trong BlueStacks → Settings → Advanced, rồi tìm máy. Trên máy này bạn có thể
+            chạy mô phỏng trước.
+          </p>
+          <label>Cổng ADB
+            <input id="adb-port" type="number" min="1" max="65535" value="5555" />
+          </label>
+          <div class="row">
+            <button id="btn-connect" class="btn primary" type="button">Tìm BlueStacks</button>
+            <button id="btn-demo" class="btn" type="button">Mô phỏng</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Nhận diện</h3>
+          <p class="muted" id="detect-note">
+            Mỗi vòng quét, bot tự tìm ô đất, cây chín và nút hạt giống.
+          </p>
+          <div class="row">
+            <button id="btn-scan" class="btn" type="button">Quét thử</button>
+            <button id="btn-reset-demo" class="btn" type="button">Tạo lại ruộng</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Chế độ auto</h3>
+          <div class="modes" id="modes">
+            <button type="button" data-mode="harvest">Thu hoạch</button>
+            <button type="button" data-mode="plant">Trồng</button>
+            <button type="button" data-mode="cycle" class="active">Thu hoạch + trồng</button>
+          </div>
+          <label>Nghỉ giữa vòng (giây)
+            <input id="pause" type="number" min="0.4" max="30" step="0.1" />
+          </label>
+          <label>Thời gian chín (mô phỏng, giây)
+            <input id="grow" type="number" min="1" max="60" step="0.5" />
+          </label>
+          <div class="row">
+            <button id="btn-start" class="btn go" type="button">Bắt đầu (F8)</button>
+            <button id="btn-stop" class="btn stop" type="button">Dừng (F9)</button>
+          </div>
+        </section>
+
+        <section class="card log-card">
+          <h3>Nhật ký</h3>
+          <ol id="log" class="log"></ol>
+        </section>
+      </aside>
+    </main>
+
+    <footer>
+      Mở Let's Farm full ruộng trên BlueStacks, bấm Tìm BlueStacks rồi Bắt đầu. Bot tự nhận ô chín / trống và kéo như trong game.
+      Macro tự chạy có thể trái quy định của game — dùng trên tài khoản của bạn, với tốc độ vừa phải.
+    </footer>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
