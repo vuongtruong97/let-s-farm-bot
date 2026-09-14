@@ -1,0 +1,62 @@
+{
+  "bolt": {
+    "template": "item_bolt",
+    "news_template": "item_bolt_news",
+    "enabled": false
+  },
+  "plank": {
+    "template": "item_plank",
+    "news_template": "item_plank_news",
+    "enabled": false
+  },
+  "ca_chua": {
+    "template": "item_ca_chua",
+    "news_template": "item_ca_chua_news",
+    "enabled": false
+  },
+  "trung": {
+    "template": "item_trung",
+    "news_template": "item_trung_news",
+    "enabled": false
+  },
+  "sua_bo": {
+    "template": "item_sua_bo",
+    "news_template": "item_sua_bo_news",
+    "enabled": false
+  },
+  "thit_lon": {
+    "template": "item_thit_lon",
+    "news_template": "item_thit_lon_news",
+    "enabled": true
+  },
+  "dinh_vit": {
+    "template": "item_dinh_vit",
+    "news_template": "item_dinh_vit_news",
+    "enabled": false
+  },
+  "bo_sua": {
+    "template": "item_bo_sua",
+    "news_template": "item_bo_sua_news",
+    "enabled": false
+  },
+  "so_do": {
+    "template": "item_so_do",
+    "news_template": "item_so_do_news",
+    "enabled": true
+  },
+  "bua_mo_rong_dat": {
+    "template": "item_bua_mo_rong_dat",
+    "news_template": "item_bua_mo_rong_dat_news",
+    "enabled": false
+  },
+  "day_chuyen": {
+    "template": "item_day_chuyen",
+    "news_template": "item_day_chuyen_news",
+    "enabled": false
+  },
+  "banh_pho_mai": {
+    "template": "item_banh_pho_mai",
+    "news_template": "item_banh_pho_mai_news",
+    "enabled": false
+  }
+}

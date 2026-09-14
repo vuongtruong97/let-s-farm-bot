@@ -1,0 +1,11 @@
+{
+  "adb_host": "127.0.0.1",
+  "adb_port": null,
+  "debug": true,
+  "allow_diamond_spending": false,
+  "swipe_duration_ms": 320,
+  "package": "",
+  "template_threshold": 0.80,
+  "buy_threshold": 0.72,
+  "news_threshold": 0.72
+}

@@ -1,0 +1,6 @@
+{
+  "wheat": {
+    "storage": "silo",
+    "seed_template": "seed_wheat"
+  }
+}
