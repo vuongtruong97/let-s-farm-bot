@@ -140,31 +140,43 @@ class TemplateMatcher:
         name: str,
         threshold: float | None = None,
         min_dist: int = 48,
+        scales: tuple[float, ...] | None = None,
+        channels: str = "bgr",
     ) -> list[TemplateMatch]:
         """All peaks for one template. Vision only — no ranking rules."""
         template = self._templates.get(name)
         if template is None:
             return []
         cutoff = self.threshold if threshold is None else threshold
+        use_scales = scales if scales is not None else (1.0,)
         search, ox, oy = _search_roi(image, name, template.shape)
         img_h, img_w = search.shape[:2]
-        th, tw = template.shape[:2]
-        if th >= img_h or tw >= img_w:
-            return []
-        result = cv2.matchTemplate(search, template, cv2.TM_CCOEFF_NORMED)
-        ys, xs = np.where(result >= cutoff)
+        haystack = _for_match(search, channels)
         peaks: list[TemplateMatch] = []
-        order = sorted(
-            zip(ys.tolist(), xs.tolist()),
-            key=lambda p: float(result[p[0], p[1]]),
-            reverse=True,
-        )
-        for y, x in order:
-            score = float(result[y, x])
-            px, py = int(x) + ox, int(y) + oy
-            if any(abs(px - h.x) < min_dist and abs(py - h.y) < min_dist for h in peaks):
+        for scale in use_scales:
+            tw = max(8, int(template.shape[1] * scale))
+            th = max(8, int(template.shape[0] * scale))
+            if tw >= img_w or th >= img_h:
                 continue
-            peaks.append(TemplateMatch(name, px, py, tw, th, score))
+            scaled = (
+                template
+                if scale == 1.0
+                else cv2.resize(template, (tw, th), interpolation=cv2.INTER_AREA)
+            )
+            needle = _for_match(scaled, channels)
+            result = cv2.matchTemplate(haystack, needle, cv2.TM_CCOEFF_NORMED)
+            ys, xs = np.where(result >= cutoff)
+            order = sorted(
+                zip(ys.tolist(), xs.tolist()),
+                key=lambda p: float(result[p[0], p[1]]),
+                reverse=True,
+            )
+            for y, x in order:
+                score = float(result[y, x])
+                px, py = int(x) + ox, int(y) + oy
+                if any(abs(px - h.x) < min_dist and abs(py - h.y) < min_dist for h in peaks):
+                    continue
+                peaks.append(TemplateMatch(name, px, py, tw, th, score))
         return peaks
 
 

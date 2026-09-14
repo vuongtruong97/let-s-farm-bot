@@ -54,9 +54,11 @@ UI_REGIONS: dict[str, RelRect] = {
     "newspaper_stand": RelRect(0.00, 0.12, 0.96, 0.84),
 }
 
-# Player shop stall: 2x5 crates on the checkered table (1920x1080 Small-UI).
-# Search/capture stay inside this box so HUD / FARMSHOP banner are ignored.
+# Visible crate table on an open stall (1920x1080 Small-UI). Always 2 rows;
+# column count varies — pan inside this box, do not assume a fixed grid.
 SHOP_CRATES = RelRect(0.16, 0.30, 0.68, 0.48)
+STALL_PAN_MAX = 10
+STALL_SWIPE_MS = 280
 
 
 def shop_crates_px(width: int, height: int) -> tuple[int, int, int, int] | None:
@@ -64,6 +66,23 @@ def shop_crates_px(width: int, height: int) -> tuple[int, int, int, int] | None:
     if width < 640 or height < 400:
         return None
     return SHOP_CRATES.to_pixels(width, height)
+
+
+def stall_swipe_px(width: int, height: int, direction: str) -> tuple[int, int, int, int]:
+    """Finger path on the crate table. left = reveal left columns, right = reveal right."""
+    box = shop_crates_px(width, height)
+    if box is None:
+        x, y, w, h = int(width * 0.16), int(height * 0.30), int(width * 0.68), int(height * 0.48)
+    else:
+        x, y, w, h = box
+    y_mid = y + h // 2
+    x_left = x + int(round(w * 0.28))
+    x_right = x + int(round(w * 0.72))
+    if direction == "left":
+        return x_left, y_mid, x_right, y_mid
+    if direction == "right":
+        return x_right, y_mid, x_left, y_mid
+    raise ValueError(f"stall swipe direction '{direction}'")
 
 
 # Farm playable area = screen minus HUD. From the same 1920x1080 capture as HUD templates.

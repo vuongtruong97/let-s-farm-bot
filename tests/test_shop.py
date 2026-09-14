@@ -218,6 +218,26 @@ def test_shop_slot_matches_color_template(tmp_path):
     assert abs(slots[0].y - 420) < 6
 
 
+def test_find_slots_matches_every_visible_copy(tmp_path):
+    color = np.zeros((48, 48, 3), dtype=np.uint8)
+    cv2.rectangle(color, (4, 4), (43, 43), (0, 60, 255), -1)
+    cv2.circle(color, (24, 24), 12, (40, 220, 40), -1)
+    shop = _bgr(PLAYER_SHOP)
+    shop[420:468, 640:688] = color
+    shop[420:468, 900:948] = color
+    dest = tmp_path / "tpl"
+    dest.mkdir()
+    cv2.imwrite(str(dest / "item_demo.png"), color)
+    matcher = TemplateMatcher(templates_dir=dest, threshold=0.72, scales=(1.0,))
+    slots = NewspaperDetector(matcher).find_slots(
+        shop, {"demo": {"template": "item_demo"}}
+    )
+    assert len(slots) >= 2
+    xs = sorted(slot.x for slot in slots)
+    assert xs[0] < 700
+    assert xs[-1] > 850
+
+
 def test_shop_slots_ignore_matches_outside_crate_table(tmp_path):
     color = np.zeros((48, 48, 3), dtype=np.uint8)
     cv2.rectangle(color, (4, 4), (43, 43), (0, 60, 255), -1)
@@ -379,7 +399,7 @@ def test_buy_coin_slot_and_verify(tmp_path, no_sleep, monkeypatch):
     before[360 : 360 + coin.shape[0], 690 : 690 + coin.shape[1]] = coin
     after = _bgr(PLAYER_SHOP)
     matcher = TemplateMatcher(templates_dir=_tpl_dir(tmp_path, {"item_wheat": icon}), scales=(1.0,))
-    device = FakeDevice([_png_bytes(before), _png_bytes(after)])
+    device = FakeDevice([_png_bytes(before), _png_bytes(before), _png_bytes(after)])
     actions = NewspaperActions(
         device, AppConfig(debug=False), matcher=matcher, wait_s=0, visit_wait_s=0
     )
@@ -399,7 +419,7 @@ def test_buy_wishlist_item_without_price_tag(tmp_path, no_sleep, monkeypatch):
     before[360:404, 640:684] = icon
     after = _bgr(PLAYER_SHOP)
     matcher = TemplateMatcher(templates_dir=_tpl_dir(tmp_path, {"item_wheat": icon}), scales=(1.0,))
-    device = FakeDevice([_png_bytes(before), _png_bytes(after)])
+    device = FakeDevice([_png_bytes(before), _png_bytes(before), _png_bytes(after)])
     actions = NewspaperActions(
         device, AppConfig(debug=False), matcher=matcher, wait_s=0, visit_wait_s=0
     )
@@ -422,6 +442,81 @@ def test_buy_missing_item_template_fails(tmp_path, no_sleep, monkeypatch):
     result = actions.buy_wishlist()
     assert result.success is False
     assert "missing template" in (result.error or "")
+
+
+def test_stall_swipe_px_left_and_right():
+    from app.vision.regions import stall_swipe_px
+
+    lx1, ly1, lx2, ly2 = stall_swipe_px(1920, 1080, "left")
+    rx1, ry1, rx2, ry2 = stall_swipe_px(1920, 1080, "right")
+    assert ly1 == ly2 == ry1 == ry2
+    assert lx1 < lx2
+    assert rx1 > rx2
+    assert (lx1, ly1, lx2, ly2) == (rx2, ry2, rx1, ry1)
+
+
+def test_crate_views_differ_on_table_paint():
+    from app.vision.newspaper import crate_views_differ
+
+    base = _bgr(PLAYER_SHOP)
+    other = base.copy()
+    other[380:700, 400:1100] = (0, 0, 255)
+    assert crate_views_differ(base, other) is True
+    assert crate_views_differ(base, base) is False
+
+
+def test_buy_wishlist_rewinds_then_pans_right(tmp_path, no_sleep, monkeypatch):
+    monkeypatch.setattr(
+        "app.actions.shop.active_wishlist",
+        lambda: {
+            "mid_item": {"template": "item_mid_item", "enabled": True},
+            "left_item": {"template": "item_left_item", "enabled": True},
+        },
+    )
+    mid_icon = np.zeros((44, 44, 3), dtype=np.uint8)
+    mid_icon[:] = (0, 0, 255)
+    cv2.rectangle(mid_icon, (4, 4), (39, 39), (255, 255, 0), 3)
+    left_icon = np.zeros((44, 44, 3), dtype=np.uint8)
+    left_icon[:] = (255, 0, 0)
+    cv2.circle(left_icon, (22, 22), 16, (0, 255, 255), -1)
+    mid = _bgr(PLAYER_SHOP)
+    mid[380:700, 360:700] = (40, 40, 40)
+    mid[420:464, 640:684] = mid_icon
+    left = _bgr(PLAYER_SHOP)
+    left[380:700, 800:1200] = (10, 180, 10)
+    left[420:464, 900:944] = left_icon
+    empty = _bgr(PLAYER_SHOP)
+    matcher = TemplateMatcher(
+        templates_dir=_tpl_dir(
+            tmp_path, {"item_mid_item": mid_icon, "item_left_item": left_icon}
+        ),
+        scales=(1.0,),
+    )
+    device = FakeDevice(
+        [
+            _png_bytes(mid),
+            _png_bytes(left),
+            _png_bytes(left),
+            _png_bytes(empty),
+            _png_bytes(empty),
+            _png_bytes(mid),
+            _png_bytes(empty),
+        ]
+    )
+    actions = NewspaperActions(
+        device, AppConfig(debug=False), matcher=matcher, wait_s=0, visit_wait_s=0
+    )
+    result = actions.buy_wishlist()
+    assert result.success
+    from app.vision.regions import stall_swipe_px
+
+    width, height = device.resolution()
+    left_swipe = stall_swipe_px(width, height, "left")
+    right_swipe = stall_swipe_px(width, height, "right")
+    swipes = [(s[0], s[1], s[2], s[3]) for s in device.swipes]
+    assert left_swipe in swipes
+    assert right_swipe in swipes
+    assert len(device.taps) >= 2
 
 
 def test_go_home_taps_fixed_hud_points(no_sleep):

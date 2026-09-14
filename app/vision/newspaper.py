@@ -188,28 +188,44 @@ class NewspaperDetector:
         search, ox, oy = _shop_search(image)
         slots: list[ShopSlot] = []
         for item, spec in wishlist.items():
-            hit = self._match_wishlist_item(search, item, spec, scene="shop")
-            if hit is None:
+            hits = self._match_wishlist_items(search, item, spec)
+            if not hits:
                 name = spec.get("template") or f"item_{item}"
                 if name not in self.matcher.names:
                     log.info(f"slot skip {item} missing {name}.png")
                 else:
                     log.info(f"slot skip {item} no match")
                 continue
-            log.info(f"slot {item} conf={hit.confidence:.2f}")
-            slots.append(
-                ShopSlot(
-                    item=item,
-                    x=hit.x + ox,
-                    y=hit.y + oy,
-                    width=hit.width,
-                    height=hit.height,
-                    confidence=hit.confidence,
-                    has_coin=True,
-                    has_diamond=False,
+            for hit in hits:
+                log.info(f"slot {item} conf={hit.confidence:.2f} {hit.x + ox},{hit.y + oy}")
+                slots.append(
+                    ShopSlot(
+                        item=item,
+                        x=hit.x + ox,
+                        y=hit.y + oy,
+                        width=hit.width,
+                        height=hit.height,
+                        confidence=hit.confidence,
+                        has_coin=True,
+                        has_diamond=False,
+                    )
                 )
-            )
         return slots
+
+    def _match_wishlist_items(
+        self, image: np.ndarray, item: str, spec: dict
+    ) -> list[TemplateMatch]:
+        shop_name = spec.get("template") or f"item_{item}"
+        if shop_name not in self.matcher.names:
+            return []
+        return self.matcher.match_many(
+            image,
+            shop_name,
+            threshold=self.buy_threshold,
+            min_dist=48,
+            scales=SHOP_ITEM_SCALES,
+            channels="bgr",
+        )
 
     def _match_wishlist_item(
         self, image: np.ndarray, item: str, spec: dict, *, scene: str
@@ -282,6 +298,27 @@ def _shop_search(image: np.ndarray) -> tuple[np.ndarray, int, int]:
         return image, 0, 0
     x, y, bw, bh = box
     return image[y : y + bh, x : x + bw], x, y
+
+
+def crate_table_bgr(source) -> np.ndarray:
+    image = source if isinstance(source, np.ndarray) else as_bgr(source)
+    search, _ox, _oy = _shop_search(image)
+    return search
+
+
+def crate_views_differ(a, b, min_changed: float = 0.03) -> bool:
+    """True when the visible stall table moved (not yet at that edge)."""
+    left = crate_table_bgr(a)
+    right = crate_table_bgr(b)
+    if left.size == 0 or right.size == 0:
+        return True
+    if left.shape != right.shape:
+        right = cv2.resize(
+            right, (left.shape[1], left.shape[0]), interpolation=cv2.INTER_AREA
+        )
+    delta = np.max(np.abs(left.astype(np.int16) - right.astype(np.int16)), axis=2)
+    changed = float(np.mean(delta > 18))
+    return changed >= min_changed
 
 
 def crop_ad_item_icon(ad_bgr: np.ndarray) -> np.ndarray:

@@ -2,12 +2,12 @@
   "bolt": {
     "template": "item_bolt",
     "news_template": "item_bolt_news",
-    "enabled": false
+    "enabled": true
   },
   "plank": {
     "template": "item_plank",
     "news_template": "item_plank_news",
-    "enabled": false
+    "enabled": true
   },
   "ca_chua": {
     "template": "item_ca_chua",
@@ -37,12 +37,12 @@
   "bo_sua": {
     "template": "item_bo_sua",
     "news_template": "item_bo_sua_news",
-    "enabled": false
+    "enabled": true
   },
   "so_do": {
     "template": "item_so_do",
     "news_template": "item_so_do_news",
-    "enabled": true
+    "enabled": false
   },
   "bua_mo_rong_dat": {
     "template": "item_bua_mo_rong_dat",

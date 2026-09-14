@@ -19,9 +19,17 @@ from app.storage.botdata import (
 )
 from app.storage.logger import get_logger
 from app.vision.detector import DetectedObject
-from app.vision.newspaper import NewspaperDetector, ShopSlot, bgr_png_bytes
+from app.vision.newspaper import NewspaperDetector, ShopSlot, bgr_png_bytes, crate_views_differ
 from app.vision.overlay import save_overlay
-from app.vision.regions import NEWS_OPEN_LEFT_PAGE, NEWS_PAGE_COUNT, hud_tap, news_spread_slots
+from app.vision.regions import (
+    NEWS_OPEN_LEFT_PAGE,
+    NEWS_PAGE_COUNT,
+    STALL_PAN_MAX,
+    STALL_SWIPE_MS,
+    hud_tap,
+    news_spread_slots,
+    stall_swipe_px,
+)
 from app.vision.screen import GameScreen, ScreenDetection, ScreenDetector
 from app.vision.template_matcher import TemplateMatcher, as_bgr
 
@@ -190,6 +198,31 @@ class NewspaperActions:
         self.device.tap(*point)
         return point
 
+    def _stall_rewind(self, png, should_stop=None):
+        """Pan the stall table left until the view stops changing."""
+        for _ in range(STALL_PAN_MAX):
+            if should_stop and should_stop():
+                return None
+            moved, png = self._stall_pan(png, "left")
+            if not moved:
+                return png
+        return png
+
+    def _stall_pan(self, png, direction: str) -> tuple[bool, object]:
+        self._swipe_stall(direction)
+        time.sleep(self.wait_s)
+        after = self.device.screenshot()
+        if not crate_views_differ(png, after):
+            log.info(f"STALL edge {direction}")
+            return False, after
+        log.info(f"STALL pan {direction}")
+        return True, after
+
+    def _swipe_stall(self, direction: str) -> None:
+        width, height = self.device.resolution()
+        x1, y1, x2, y2 = stall_swipe_px(width, height, direction)
+        self.device.swipe(x1, y1, x2, y2, STALL_SWIPE_MS)
+
     def _reset_home_if_needed(self, reset_home: bool) -> ActionResult | None:
         if not reset_home:
             return None
@@ -278,7 +311,7 @@ class NewspaperActions:
             return ActionResult(True, action)
         return ActionResult(False, action, f"screen={screen.screen.value}")
 
-    def buy_wishlist(self) -> ActionResult:
+    def buy_wishlist(self, should_stop=None, max_buys: int | None = None) -> ActionResult:
         self.matcher.reload()
         self.wishlist = active_wishlist()
         self._sync_vision_thresholds()
@@ -305,27 +338,38 @@ class NewspaperActions:
             return ActionResult(
                 False, Action("BUY", "none"), f"screen={screen.screen.value}"
             )
-        slots = self.news.find_slots(png, ready)
-        if not slots:
+        png = self._stall_rewind(png, should_stop)
+        if png is None:
+            return ActionResult(False, Action("STOP", "buy"), "stopped")
+        last = ActionResult(False, Action("BUY", "none"), "no wishlist slot")
+        bought = 0
+        for _ in range(STALL_PAN_MAX + 1):
+            if should_stop and should_stop():
+                return ActionResult(False, Action("STOP", "buy"), "stopped")
+            slots = self.news.find_slots(png, ready)
+            if slots:
+                for slot in slots:
+                    last = self._buy_one(slot)
+                    if not last.success:
+                        return last
+                    bought += 1
+                    if max_buys is not None and bought >= max_buys:
+                        return last
+                png = self.device.screenshot()
+                continue
+            moved, png = self._stall_pan(png, "right")
+            if not moved:
+                break
+        if not bought:
             log.info(f"BUY no slot matched missing={missing}")
             return ActionResult(False, Action("BUY", "none"), "no wishlist slot")
-        last = ActionResult(False, Action("BUY", "none"), "buy failed")
-        for slot in slots:
-            last = self._buy_one(slot)
-            if not last.success:
-                return last
         return last
 
     def buy_open_shop(self, limit: int = 1, should_stop=None) -> ActionResult:
         """Buy wishlist items on the shop already on screen. Does not open newspaper."""
-        last = ActionResult(False, Action("BUY", "none"), "no purchase")
-        for _ in range(max(1, limit)):
-            if should_stop and should_stop():
-                return ActionResult(False, Action("STOP", "buy_shop"), "stopped")
-            last = self.buy_wishlist()
-            if not last.success:
-                return last
-        return last
+        if should_stop and should_stop():
+            return ActionResult(False, Action("STOP", "buy_shop"), "stopped")
+        return self.buy_wishlist(should_stop=should_stop, max_buys=max(1, limit))
 
     def capture_open_shop(self, should_stop=None) -> ActionResult:
         """Crop crate icons on the open shop into the icon library."""
