@@ -12,7 +12,7 @@ from app.main import main
 from app.storage.botdata import save_column
 from app.vision.detector import DetectedObject
 from app.vision.newspaper import NewspaperDetector
-from app.vision.regions import news_spread_slots
+from app.vision.regions import NEWS_PAGE_COUNT, news_spread_slots
 from app.vision.screen import GameScreen, ScreenDetector
 from app.vision.template_matcher import TemplateMatcher
 from tests.test_farming import FakeDevice, _png_bytes
@@ -54,6 +54,7 @@ def _tpl_dir(tmp_path: Path, extras: dict[str, np.ndarray] | None = None) -> Pat
 def isolated_column(tmp_path, monkeypatch):
     path = tmp_path / "column.json"
     monkeypatch.setattr("app.storage.botdata.column_path", lambda: path)
+    monkeypatch.setattr("app.storage.botdata.purchases_path", lambda: tmp_path / "purchases.json")
 
 
 @pytest.fixture
@@ -407,6 +408,128 @@ def test_buy_coin_slot_and_verify(tmp_path, no_sleep, monkeypatch):
     assert result.success
     assert result.action.target == "wheat"
     assert device.taps
+    from app.storage.botdata import list_purchases
+
+    rows = list_purchases()
+    assert [row["kind"] for row in rows] == ["buy", "match"]
+    assert rows[0]["item"] == "wheat"
+    assert "T" in rows[0]["at"]
+
+
+def test_stall_match_records_wishlist_when_buy_verify_fails(tmp_path, no_sleep, monkeypatch):
+    monkeypatch.setattr(
+        "app.actions.shop.active_wishlist",
+        lambda: {"wheat": {"template": "item_wheat", "enabled": True}},
+    )
+    icon = _item_icon()
+    coin = cv2.imread(str(TEMPLATES / "price_coin.png"))
+    assert coin is not None
+    stall = _bgr(PLAYER_SHOP)
+    stall[360:404, 640:684] = icon
+    stall[360 : 360 + coin.shape[0], 690 : 690 + coin.shape[1]] = coin
+    matcher = TemplateMatcher(templates_dir=_tpl_dir(tmp_path, {"item_wheat": icon}), scales=(1.0,))
+    device = FakeDevice([_png_bytes(stall), _png_bytes(stall), _png_bytes(stall)])
+    actions = NewspaperActions(
+        device, AppConfig(debug=False), matcher=matcher, wait_s=0, visit_wait_s=0
+    )
+    result = actions.buy_wishlist()
+    assert not result.success
+    assert result.error == "verify failed"
+    from app.storage.botdata import list_purchases
+
+    rows = list_purchases()
+    assert [row["kind"] for row in rows] == ["match"]
+    assert rows[0]["item"] == "wheat"
+
+
+def test_buy_wishlist_succeeds_when_icon_turns_gray(tmp_path, no_sleep, monkeypatch):
+    monkeypatch.setattr(
+        "app.actions.shop.active_wishlist",
+        lambda: {"wheat": {"template": "item_wheat", "enabled": True}},
+    )
+    icon = _item_icon()
+    gray = cv2.cvtColor(cv2.cvtColor(icon, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+    before = _bgr(PLAYER_SHOP)
+    before[360:404, 640:684] = icon
+    after = _bgr(PLAYER_SHOP)
+    after[360:404, 640:684] = gray
+    matcher = TemplateMatcher(templates_dir=_tpl_dir(tmp_path, {"item_wheat": icon}), scales=(1.0,))
+    device = FakeDevice([_png_bytes(before), _png_bytes(before), _png_bytes(after)])
+    actions = NewspaperActions(
+        device, AppConfig(debug=False), matcher=matcher, wait_s=0, visit_wait_s=0
+    )
+    result = actions.buy_wishlist()
+    assert result.success
+    assert result.action.target == "wheat"
+
+
+def test_buy_wishlist_allows_popup_screen(tmp_path, no_sleep, monkeypatch):
+    from app.vision.screen import GameScreen, ScreenDetection
+
+    monkeypatch.setattr(
+        "app.actions.shop.active_wishlist",
+        lambda: {"wheat": {"template": "item_wheat", "enabled": True}},
+    )
+    icon = _item_icon()
+    before = _bgr(PLAYER_SHOP)
+    before[360:404, 640:684] = icon
+    after = _bgr(PLAYER_SHOP)
+    matcher = TemplateMatcher(templates_dir=_tpl_dir(tmp_path, {"item_wheat": icon}), scales=(1.0,))
+    device = FakeDevice([_png_bytes(before), _png_bytes(before), _png_bytes(after)])
+    actions = NewspaperActions(
+        device, AppConfig(debug=False), matcher=matcher, wait_s=0, visit_wait_s=0
+    )
+    monkeypatch.setattr(
+        actions.screens,
+        "detect",
+        lambda _png: ScreenDetection(GameScreen.POPUP, 0.99, []),
+    )
+    result = actions.buy_wishlist()
+    assert result.success
+    assert result.action.target == "wheat"
+
+
+def test_buy_wishlist_continues_after_verify_fail(tmp_path, no_sleep, monkeypatch):
+    monkeypatch.setattr(
+        "app.actions.shop.active_wishlist",
+        lambda: {
+            "so_do": {"template": "item_so_do", "enabled": True},
+            "wheat": {"template": "item_wheat", "enabled": True},
+        },
+    )
+    fail_icon = np.zeros((44, 44, 3), dtype=np.uint8)
+    fail_icon[:] = (0, 0, 255)
+    cv2.rectangle(fail_icon, (4, 4), (39, 39), (255, 255, 0), 3)
+    ok_icon = _item_icon()
+    both = _bgr(PLAYER_SHOP)
+    both[360:404, 500:544] = fail_icon
+    both[360:404, 640:684] = ok_icon
+    after_ok = _bgr(PLAYER_SHOP)
+    after_ok[360:404, 500:544] = fail_icon
+    matcher = TemplateMatcher(
+        templates_dir=_tpl_dir(
+            tmp_path, {"item_so_do": fail_icon, "item_wheat": ok_icon}
+        ),
+        scales=(1.0,),
+    )
+    device = FakeDevice(
+        [
+            _png_bytes(both),
+            _png_bytes(both),
+            _png_bytes(both),
+            _png_bytes(both),
+            _png_bytes(after_ok),
+            _png_bytes(after_ok),
+        ]
+    )
+    actions = NewspaperActions(
+        device, AppConfig(debug=False), matcher=matcher, wait_s=0, visit_wait_s=0
+    )
+    result = actions.buy_wishlist()
+    assert result.success
+    assert result.action.target == "wheat"
+    assert len(device.taps) == 2
+    assert device.taps[0][0] < device.taps[1][0]
 
 
 def test_buy_wishlist_item_without_price_tag(tmp_path, no_sleep, monkeypatch):
@@ -578,7 +701,7 @@ def test_shop_loop_finds_column_without_going_home_between_visits(no_sleep, monk
     monkeypatch.setattr(actions, "go_home", lambda: homes.append(1) or ActionResult(True, Action("GO_HOME", "house")))
     monkeypatch.setattr(actions, "find_column", lambda: columns.append(1) or ActionResult(True, Action("FIND_COLUMN", "stand")))
     monkeypatch.setattr(actions, "open_newspaper", lambda: ActionResult(True, Action("OPEN_NEWSPAPER", "stand")))
-    monkeypatch.setattr(actions, "_next_ad", lambda: ad)
+    monkeypatch.setattr(actions, "_next_listing", lambda _mode: ad)
     monkeypatch.setattr(actions, "visit_shop", lambda _ad: ActionResult(True, Action("VISIT_SHOP", "ad")))
     monkeypatch.setattr(actions, "buy_wishlist", lambda: ActionResult(True, Action("BUY", "egg")))
     monkeypatch.setattr(actions, "close_shop", lambda: ActionResult(True, Action("CLOSE_SHOP", "shop")))
@@ -586,6 +709,292 @@ def test_shop_loop_finds_column_without_going_home_between_visits(no_sleep, monk
     assert result.success
     assert columns == [1, 1]
     assert homes == [1]
+
+
+def test_reset_loop_state_clears_plan_and_visited(no_sleep):
+    device = FakeDevice([])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    actions._planned_ads = [(2, 1), (6, 0)]
+    actions._visited_ads.add((2, 1))
+    actions._news_occupancy = ((2, 1), (3, 0))
+    actions._news_left_page = 8
+    actions.reset_loop_state()
+    assert actions._planned_ads == []
+    assert actions._visited_ads == set()
+    assert actions._news_occupancy == ()
+    assert actions._news_left_page == 2
+
+
+def test_until_done_visits_all_shops_then_home_and_clears(no_sleep, monkeypatch):
+    from app.actions.farming import Action, ActionResult
+
+    wish = DetectedObject("newspaper", 230, 173, 340, 260, 1.0, "ad")
+    coin = DetectedObject("newspaper", 995, 173, 340, 260, 1.0, "ad")
+    device = FakeDevice([])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    actions._planned_ads = [(2, 1), (3, 0)]
+    actions._visited_ads.add((2, 0))
+    actions._news_occupancy = ((2, 1), (3, 0))
+    visited = _stub_news_loop(actions, monkeypatch)
+    homes: list[int] = []
+    monkeypatch.setattr(
+        actions, "go_home", lambda: homes.append(1) or ActionResult(True, Action("GO_HOME", "house"))
+    )
+    queue = [wish, coin]
+    monkeypatch.setattr(
+        actions, "_next_listing", lambda _mode: queue.pop(0) if queue else None
+    )
+    result = actions.shop_from_newspaper(
+        limit=1, mode="sweep", reset_home=False, until_done=True
+    )
+    assert result.success
+    assert result.action.target == "done"
+    assert result.error == "all shops done"
+    assert [(ad.x, ad.y) for ad in visited] == [(wish.x, wish.y), (coin.x, coin.y)]
+    assert homes == [1]
+    assert actions._planned_ads == []
+    assert actions._visited_ads == set()
+    assert actions._news_occupancy == ()
+
+
+def _stub_news_loop(actions, monkeypatch):
+    from app.actions.farming import Action, ActionResult
+
+    visited: list[DetectedObject] = []
+    monkeypatch.setattr(
+        actions, "go_home", lambda: ActionResult(True, Action("GO_HOME", "house"))
+    )
+    monkeypatch.setattr(
+        actions, "find_column", lambda: ActionResult(True, Action("FIND_COLUMN", "stand"))
+    )
+    monkeypatch.setattr(
+        actions,
+        "open_newspaper",
+        lambda: ActionResult(True, Action("OPEN_NEWSPAPER", "stand")),
+    )
+    monkeypatch.setattr(
+        actions, "close_shop", lambda: ActionResult(True, Action("CLOSE_SHOP", "shop"))
+    )
+    monkeypatch.setattr(
+        actions,
+        "visit_shop",
+        lambda ad: visited.append(ad) or ActionResult(True, Action("VISIT_SHOP", "ad")),
+    )
+    monkeypatch.setattr(
+        actions,
+        "buy_wishlist",
+        lambda: ActionResult(False, Action("BUY", "none"), "no wishlist slot"),
+    )
+    return visited
+
+
+def test_follow_does_not_visit_non_wishlist_coin_ad(no_sleep, monkeypatch):
+    coin = DetectedObject("newspaper", 995, 173, 340, 260, 1.0, "ad")
+    device = FakeDevice([])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    visited = _stub_news_loop(actions, monkeypatch)
+    monkeypatch.setattr(actions, "_next_listing", lambda mode: coin if mode == "sweep" else None)
+    result = actions.shop_from_newspaper(limit=1, mode="follow", reset_home=False)
+    assert not result.success
+    assert result.error == "no newspaper ads"
+    assert visited == []
+
+
+def test_shop_alias_follows_wishlist_only(no_sleep, monkeypatch):
+    coin = DetectedObject("newspaper", 995, 173, 340, 260, 1.0, "ad")
+    device = FakeDevice([])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    visited = _stub_news_loop(actions, monkeypatch)
+    monkeypatch.setattr(actions, "_next_listing", lambda mode: coin if mode == "sweep" else None)
+    result = actions.shop_from_newspaper(limit=1, mode="shop", reset_home=False)
+    assert visited == []
+    assert result.error == "no newspaper ads"
+
+
+def test_sweep_visits_remaining_coin_ad_after_wishlist(no_sleep, monkeypatch):
+    wish = DetectedObject("newspaper", 230, 173, 340, 260, 1.0, "ad")
+    coin = DetectedObject("newspaper", 995, 173, 340, 260, 1.0, "ad")
+    device = FakeDevice([])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    visited = _stub_news_loop(actions, monkeypatch)
+    queue = [wish, coin]
+    monkeypatch.setattr(
+        actions, "_next_listing", lambda _mode: queue.pop(0) if queue else None
+    )
+    result = actions.shop_from_newspaper(limit=1, mode="sweep", reset_home=False)
+    assert [(ad.x, ad.y) for ad in visited] == [(wish.x, wish.y), (coin.x, coin.y)]
+    assert result.error == "no newspaper ads"
+
+
+def test_follow_plan_skips_coin_only_cells(no_sleep, monkeypatch):
+    device = FakeDevice([])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    actions._news_left_page = NEWS_PAGE_COUNT
+    slots = {
+        (page, slot): (x, y, w, h)
+        for page, slot, x, y, w, h in news_spread_slots(1920, 1080, NEWS_PAGE_COUNT)
+    }
+    wish = DetectedObject("newspaper", *slots[(10, 1)], 1.0, "ad")
+    coin = DetectedObject("newspaper", *slots[(10, 2)], 1.0, "ad")
+    monkeypatch.setattr(actions.news, "find_ads", lambda png, left_page=10: [wish, coin])
+    monkeypatch.setattr(
+        actions.news,
+        "find_wishlist_ads",
+        lambda png, wishlist, left_page=10, ads=None: [(wish, "egg")],
+    )
+    blank = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    actions._rescan_plan("follow", first_png=blank)
+    assert actions._planned_ads == [(10, 1)]
+
+
+def test_sweep_plan_appends_remaining_coin_cells(no_sleep, monkeypatch):
+    device = FakeDevice([])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    actions._news_left_page = NEWS_PAGE_COUNT
+    slots = {
+        (page, slot): (x, y, w, h)
+        for page, slot, x, y, w, h in news_spread_slots(1920, 1080, NEWS_PAGE_COUNT)
+    }
+    wish = DetectedObject("newspaper", *slots[(10, 1)], 1.0, "ad")
+    coin = DetectedObject("newspaper", *slots[(10, 2)], 1.0, "ad")
+    monkeypatch.setattr(actions.news, "find_ads", lambda png, left_page=10: [wish, coin])
+    monkeypatch.setattr(
+        actions.news,
+        "find_wishlist_ads",
+        lambda png, wishlist, left_page=10, ads=None: [(wish, "egg")],
+    )
+    blank = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    actions._rescan_plan("sweep", first_png=blank)
+    assert actions._planned_ads == [(10, 1), (10, 2)]
+
+
+def test_unchanged_newspaper_seeks_next_cell_without_rescanning(no_sleep, monkeypatch):
+    device = FakeDevice([])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    actions._planned_ads = [(2, 1), (6, 0)]
+    actions._visited_ads.add((2, 1))
+    actions._news_occupancy = ((2, 1), (3, 0))
+    actions._news_left_page = 2
+    rescans: list[int] = []
+    turns: list[int] = []
+    monkeypatch.setattr(
+        actions, "_rescan_plan", lambda mode, first_png=None: rescans.append(1)
+    )
+    monkeypatch.setattr(
+        actions,
+        "_turn_newspaper",
+        lambda: turns.append(actions._news_left_page)
+        or setattr(
+            actions,
+            "_news_left_page",
+            min(NEWS_PAGE_COUNT, actions._news_left_page + 2),
+        ),
+    )
+    ad = actions._next_listing("follow")
+    assert rescans == []
+    assert turns == [2, 4]
+    assert actions._ad_cell(ad) == (6, 0)
+
+
+def test_remaining_plan_does_not_rescan_when_first_spread_looks_different(
+    no_sleep, monkeypatch
+):
+    from app.actions.farming import Action, ActionResult
+
+    device = FakeDevice([])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    actions._planned_ads = [(2, 1), (2, 2)]
+    actions._visited_ads.add((2, 1))
+    actions._news_occupancy = ((2, 1), (2, 2))
+    actions._news_left_page = 2
+    monkeypatch.setattr(
+        actions,
+        "_spread_occupancy",
+        lambda png: ((9, 9),),
+    )
+    monkeypatch.setattr(
+        actions, "close_shop", lambda: ActionResult(True, Action("CLOSE_SHOP", "shop"))
+    )
+    rescans: list[int] = []
+    monkeypatch.setattr(
+        actions, "_rescan_plan", lambda mode, first_png=None: rescans.append(1)
+    )
+    ad = actions._next_listing("sweep")
+    assert rescans == []
+    assert actions._ad_cell(ad) == (2, 2)
+
+
+def test_exhausted_plan_skips_rescan_when_occupancy_matches(no_sleep, monkeypatch):
+    device = FakeDevice([_png_bytes(np.zeros((1080, 1920, 3), dtype=np.uint8))])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    actions._planned_ads = [(2, 1)]
+    actions._visited_ads.add((2, 1))
+    actions._news_occupancy = ((2, 1), (3, 0))
+    actions._news_left_page = 2
+    monkeypatch.setattr(
+        actions, "_spread_occupancy", lambda png: ((2, 1), (3, 0))
+    )
+    rescans: list[int] = []
+    monkeypatch.setattr(
+        actions, "_rescan_plan", lambda mode, first_png=None: rescans.append(1)
+    )
+    ad = actions._next_listing("sweep")
+    assert ad is None
+    assert rescans == []
+
+
+def test_first_open_scans_all_pages_once(no_sleep, monkeypatch):
+    from app.actions.farming import Action, ActionResult
+
+    blank = _png_bytes(np.zeros((1080, 1920, 3), dtype=np.uint8))
+    device = FakeDevice([blank])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    turns: list[int] = []
+    monkeypatch.setattr(actions.news, "find_ads", lambda png, left_page=2: [])
+    monkeypatch.setattr(
+        actions.news,
+        "find_wishlist_ads",
+        lambda png, wishlist, left_page=2, ads=None: [],
+    )
+    monkeypatch.setattr(
+        actions, "close_shop", lambda: ActionResult(True, Action("CLOSE_SHOP", "shop"))
+    )
+    monkeypatch.setattr(
+        actions,
+        "_turn_newspaper",
+        lambda: turns.append(actions._news_left_page)
+        or setattr(
+            actions,
+            "_news_left_page",
+            min(NEWS_PAGE_COUNT, actions._news_left_page + 2),
+        ),
+    )
+    ad = actions._next_listing("follow")
+    assert ad is None
+    assert turns == [2, 4, 6, 8]
+    assert actions._planned_ads == []
+    assert actions._news_occupancy == ()
+
+
+def test_newspaper_fingerprints_differ_on_listing_paint():
+    from app.vision.newspaper import newspaper_fingerprints_differ
+
+    base = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    other = base.copy()
+    other[200:400, 250:500] = (0, 180, 40)
+    assert newspaper_fingerprints_differ(base, base) is False
+    assert newspaper_fingerprints_differ(base, other) is True
+
+
+def test_unused_coin_ad_skips_visited_cells(no_sleep, monkeypatch):
+    ad = DetectedObject("newspaper", 600, 453, 340, 260, 1.0, "ad")
+    device = FakeDevice([])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    monkeypatch.setattr(actions.news, "find_ads", lambda png, left_page=2: [ad])
+    monkeypatch.setattr(actions, "_ad_cell", lambda _ad: (2, 1))
+    assert actions._unused_coin_ad(None) is ad
+    actions._visited_ads.add((2, 1))
+    assert actions._unused_coin_ad(None) is None
 
 
 def test_cli_detect_newspaper(capsys):

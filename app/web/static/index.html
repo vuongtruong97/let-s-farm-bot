@@ -43,24 +43,42 @@
         </div>
         <p id="run-note" class="muted"></p>
         <pre id="run-log" class="log"></pre>
+        <div class="buy-heading-row">
+          <h3 class="buy-heading">Lịch sử mua</h3>
+          <button id="btn-buy-reset" class="btn danger btn-compact" type="button">Xóa</button>
+        </div>
+        <table class="buy-log">
+          <thead>
+            <tr>
+              <th>Wishlist</th>
+              <th>Khớp</th>
+              <th>Mua</th>
+            </tr>
+          </thead>
+          <tbody id="buy-log"></tbody>
+        </table>
       </aside>
 
       <section class="page card active" data-page="control">
         <h2>Điều khiển bot</h2>
-        <p class="muted">Vòng lặp chạy các hành vi đã chọn đến khi bấm Dừng. Một lệnh một-shot chạy xong thì nghỉ.</p>
+        <p class="muted">Vòng lặp: thu hoạch / trồng / ghé hết shop trên báo, về nhà, xóa bộ nhớ vòng cũ, nghỉ số phút đã chọn, rồi chạy vòng mới. Một lệnh một-shot chạy xong thì nghỉ.</p>
         <div class="behaviors">
           <label class="check"><input id="bh" type="checkbox" /> Thu hoạch</label>
           <label class="check"><input id="bp" type="checkbox" /> Trồng</label>
           <label class="check"><input id="bn" type="checkbox" checked /> Báo</label>
-          <label class="check"><input type="radio" name="news-mode" value="browse" /> Chỉ xem tin</label>
-          <label class="check"><input type="radio" name="news-mode" value="shop" checked /> Ghé shop mua</label>
+          <label class="check"><input type="radio" name="news-mode" value="follow" /> Ghé ngay wishlist</label>
+          <label class="check"><input type="radio" name="news-mode" value="sweep" checked /> Ưu tiên rồi lần lượt</label>
           <label
             >Cây
             <input id="run-crop" value="wheat" />
           </label>
           <label
             >Limit / vòng
-            <input id="run-limit" type="number" min="1" max="20" value="1" />
+            <input id="run-limit" type="number" min="1" max="20" value="20" />
+          </label>
+          <label
+            >Nghỉ sau hết shop (phút)
+            <input id="run-rest-min" type="number" min="0" max="180" step="0.5" value="5" />
           </label>
         </div>
         <div class="row wrap">
@@ -72,8 +90,8 @@
           <button class="btn" type="button" data-run="go_home">Về nhà</button>
           <button class="btn" type="button" data-run="harvest">Thu hoạch 1 lần</button>
           <button class="btn" type="button" data-run="plant">Trồng 1 lần</button>
-          <button class="btn" type="button" data-run="newspaper" data-news-mode="browse">Xem tin báo 1 lần</button>
-          <button class="btn" type="button" data-run="newspaper" data-news-mode="shop">Mua báo 1 lần</button>
+          <button class="btn" type="button" data-run="newspaper" data-news-mode="follow">Ghé ngay 1 lần</button>
+          <button class="btn" type="button" data-run="newspaper" data-news-mode="sweep">Lần lượt 1 lần</button>
         </div>
       </section>
 
@@ -221,6 +239,18 @@
             <input id="news_threshold" name="news_threshold" type="number" min="0.5" max="0.90" step="0.01" />
           </label>
           <label
+            >Nghỉ sau hết shop trên báo (phút)
+            <input id="loop_rest_min" name="loop_rest_min" type="number" min="0" max="180" step="0.5" />
+          </label>
+          <label
+            >Chờ giữa action (giây)
+            <input id="action_wait_s" name="action_wait_s" type="number" min="0" max="10" step="0.1" />
+          </label>
+          <label
+            >Chờ sau mua hàng — đợi server SOLD (giây)
+            <input id="buy_wait_s" name="buy_wait_s" type="number" min="0" max="10" step="0.1" />
+          </label>
+          <label
             >Swipe (ms)
             <input id="swipe_duration_ms" name="swipe_duration_ms" type="number" min="50" max="3000" />
           </label>
@@ -251,9 +281,7 @@
         </div>
 
         <h3>Mua hàng trên báo</h3>
-        <p class="muted">
-          Về nhà trước (Friends → thăm bạn → đóng shop → shop_home). Từ căn nhà, cột báo luôn cùng toạ độ. Bước 5 chỉ tap tin wishlist chưa ghé trên trang hiện tại.
-        </p>
+        <p class="muted">Về nhà trước (Friends → thăm bạn → đóng shop → shop_home). Từ căn nhà, cột báo luôn cùng toạ độ. Bước 5 chỉ tap tin wishlist chưa ghé trên trang hiện tại.</p>
         <ol class="news-steps">
           <li>
             <button class="btn primary" type="button" data-run="go_home">0. Về nhà</button>
@@ -356,6 +384,15 @@
       <p id="library-picker-empty" class="empty">Thư viện loại này còn trống.</p>
       <div class="modal-actions">
         <button id="library-picker-cancel" class="btn" type="button">Huỷ</button>
+      </div>
+    </dialog>
+
+    <dialog id="buy-history-modal" class="modal">
+      <h3 id="buy-history-title">Chi tiết</h3>
+      <p id="buy-history-item" class="muted"></p>
+      <ol id="buy-history-list" class="buy-history-list"></ol>
+      <div class="modal-actions">
+        <button id="buy-history-close" class="btn" type="button">Đóng</button>
       </div>
     </dialog>
 

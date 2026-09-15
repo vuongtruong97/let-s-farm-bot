@@ -12,6 +12,9 @@ from app.vision.detector import DetectedObject, match_to_object
 from app.vision.regions import (
     NEWS_OPEN_LEFT_PAGE,
     NEWS_PROMO_SLOTS,
+    NEWS_SLOT_COLS,
+    NEWS_SLOT_ROWS,
+    NEWS_SLOT_SIZE,
     news_spread_slots,
     shop_crates_px,
 )
@@ -29,6 +32,8 @@ SLOT_PAD = 90
 LIME_LO = (40, 150, 140)
 LIME_HI = (70, 255, 255)
 MIN_LIME_PX = 80
+SOLD_SAT_MAX = 50
+PRICE_NEAR_PAD = (12, 8, 56, 56)
 
 
 @dataclass
@@ -197,20 +202,38 @@ class NewspaperDetector:
                     log.info(f"slot skip {item} no match")
                 continue
             for hit in hits:
-                log.info(f"slot {item} conf={hit.confidence:.2f} {hit.x + ox},{hit.y + oy}")
+                x, y = hit.x + ox, hit.y + oy
+                crop = _slot_crop(image, x, y, hit.width, hit.height)
+                if _is_gray_crate(crop):
+                    log.info(f"slot skip {item} sold gray {x},{y}")
+                    continue
+                has_coin = _price_near(image, self.matcher, x, y, hit.width, hit.height)
+                log.info(f"slot {item} conf={hit.confidence:.2f} {x},{y}")
                 slots.append(
                     ShopSlot(
                         item=item,
-                        x=hit.x + ox,
-                        y=hit.y + oy,
+                        x=x,
+                        y=y,
                         width=hit.width,
                         height=hit.height,
                         confidence=hit.confidence,
-                        has_coin=True,
+                        has_coin=has_coin,
                         has_diamond=False,
                     )
                 )
         return slots
+
+    def slot_sold(self, source, slot: ShopSlot, *, had_coin: bool = False) -> bool:
+        """True when the crate looks sold: grey icon and/or the coin tag vanished."""
+        image = source if isinstance(source, np.ndarray) else as_bgr(source)
+        crop = _slot_crop(image, slot.x, slot.y, slot.width, slot.height)
+        if _is_gray_crate(crop):
+            return True
+        if had_coin and not _price_near(
+            image, self.matcher, slot.x, slot.y, slot.width, slot.height
+        ):
+            return True
+        return False
 
     def _match_wishlist_items(
         self, image: np.ndarray, item: str, spec: dict
@@ -291,6 +314,55 @@ class NewspaperDetector:
         return self.matcher.match_one(image, name)
 
 
+def _slot_crop(image: np.ndarray, x: int, y: int, w: int, h: int) -> np.ndarray:
+    ih, iw = image.shape[:2]
+    x1, y1 = max(0, x), max(0, y)
+    x2, y2 = min(iw, x + w), min(ih, y + h)
+    if x2 <= x1 or y2 <= y1:
+        return image[0:0, 0:0]
+    return image[y1:y2, x1:x2]
+
+
+def _mean_saturation(crop: np.ndarray) -> float:
+    if crop.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    lit = hsv[:, :, 2] > 40
+    if not np.any(lit):
+        return 0.0
+    return float(np.mean(hsv[:, :, 1][lit]))
+
+
+def _is_gray_crate(crop: np.ndarray) -> bool:
+    return crop.size > 0 and _mean_saturation(crop) <= SOLD_SAT_MAX
+
+
+def _price_near(
+    image: np.ndarray, matcher: TemplateMatcher, x: int, y: int, w: int, h: int
+) -> bool:
+    ih, iw = image.shape[:2]
+    pl, pu, pr, pd = PRICE_NEAR_PAD
+    x1, y1 = max(0, x - pl), max(0, y - pu)
+    x2, y2 = min(iw, x + w + pr), min(ih, y + h + pd)
+    if x2 <= x1 or y2 <= y1:
+        return False
+    roi = image[y1:y2, x1:x2]
+    if "price_coin" in matcher.names:
+        hit = matcher.match_one(
+            roi,
+            "price_coin",
+            threshold=COIN_THRESHOLD,
+            scales=(1.0, 0.85, 0.9, 1.1),
+        )
+        if hit is not None:
+            return True
+    for tx, ty, tw, th in _lime_tag_boxes(image):
+        cx, cy = tx + tw // 2, ty + th // 2
+        if x1 <= cx <= x2 and y1 <= cy <= y2:
+            return True
+    return False
+
+
 def _shop_search(image: np.ndarray) -> tuple[np.ndarray, int, int]:
     h, w = image.shape[:2]
     box = shop_crates_px(w, h)
@@ -304,6 +376,51 @@ def crate_table_bgr(source) -> np.ndarray:
     image = source if isinstance(source, np.ndarray) else as_bgr(source)
     search, _ox, _oy = _shop_search(image)
     return search
+
+
+NEWS_FP_SIZE = (96, 54)
+
+
+def newspaper_listing_bgr(source) -> np.ndarray:
+    """Crop of Daily Dirt listing cards on the open spread (not the cover chrome)."""
+    image = source if isinstance(source, np.ndarray) else as_bgr(source)
+    h, w = image.shape[:2]
+    x0 = int(round(NEWS_SLOT_COLS[0] * w))
+    y0 = int(round(NEWS_SLOT_ROWS[0] * h))
+    x1 = int(round((NEWS_SLOT_COLS[-1] + NEWS_SLOT_SIZE.w) * w))
+    y1 = int(round((NEWS_SLOT_ROWS[-1] + NEWS_SLOT_SIZE.h) * h))
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(w, x1), min(h, y1)
+    if x1 <= x0 or y1 <= y0:
+        return np.zeros((1, 1, 3), dtype=np.uint8)
+    return image[y0:y1, x0:x1]
+
+
+def newspaper_fingerprint(source) -> np.ndarray:
+    crop = newspaper_listing_bgr(source)
+    if crop.size == 0:
+        return np.zeros((NEWS_FP_SIZE[1], NEWS_FP_SIZE[0]), dtype=np.uint8)
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    return cv2.resize(gray, NEWS_FP_SIZE, interpolation=cv2.INTER_AREA)
+
+
+def newspaper_fingerprints_differ(a, b, min_changed: float = 0.04) -> bool:
+    """True when the open listing spread is not the same newspaper."""
+    left = a if _is_news_fp(a) else newspaper_fingerprint(a)
+    right = b if _is_news_fp(b) else newspaper_fingerprint(b)
+    if left.shape != right.shape:
+        return True
+    delta = np.abs(left.astype(np.int16) - right.astype(np.int16))
+    changed = float(np.mean(delta > 18))
+    return changed >= min_changed
+
+
+def _is_news_fp(value) -> bool:
+    return (
+        isinstance(value, np.ndarray)
+        and value.ndim == 2
+        and value.shape == (NEWS_FP_SIZE[1], NEWS_FP_SIZE[0])
+    )
 
 
 def crate_views_differ(a, b, min_changed: float = 0.03) -> bool:

@@ -454,6 +454,115 @@ select {
   margin-top: 10px;
   max-height: 220px;
 }
+.buy-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 14px 0 6px;
+}
+.buy-heading {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.btn-compact {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+.buy-log {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0;
+  padding: 0;
+  max-height: 520px;
+  overflow: auto;
+  font-size: 12px;
+  display: block;
+}
+.buy-log thead,
+.buy-log tbody,
+.buy-log tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+.buy-log thead {
+  color: var(--muted);
+  font-size: 11px;
+  text-align: left;
+}
+.buy-log th,
+.buy-log td {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.buy-log th:nth-child(1),
+.buy-log td:nth-child(1) {
+  width: 52%;
+}
+.buy-log th:nth-child(2),
+.buy-log td:nth-child(2),
+.buy-log th:nth-child(3),
+.buy-log td:nth-child(3) {
+  width: 24%;
+  text-align: center;
+}
+.buy-log tbody {
+  display: block;
+  max-height: 500px;
+  overflow: auto;
+}
+.buy-log .item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.buy-log img,
+.buy-log .ph {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #1c2818;
+  flex: none;
+}
+.buy-log .ph {
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: #8aa07a;
+}
+.buy-log b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.buy-log .buy-count {
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--moss-dark);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.buy-log .buy-count.zero {
+  text-decoration: none;
+  color: var(--muted);
+  cursor: default;
+}
+.buy-history-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  max-height: 240px;
+  overflow: auto;
+  font-variant-numeric: tabular-nums;
+}
 .viewport {
   position: relative;
   background: #1c2818;
@@ -497,6 +606,7 @@ select {
 .empty-frame {
   position: absolute;
   inset: 0;
+  z-index: -1;
   display: grid;
   place-items: center;
   color: #d9e7c8;

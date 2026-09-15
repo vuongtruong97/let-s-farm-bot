@@ -239,10 +239,15 @@ class _StubNews:
     def __init__(self, device, config=None, **kwargs):
         pass
 
-    def shop_from_newspaper(self, limit=1, should_stop=None, mode="shop", reset_home=True):
+    def shop_from_newspaper(
+        self, limit=1, should_stop=None, mode="shop", reset_home=True, until_done=False
+    ):
         from app.actions.farming import Action, ActionResult
 
         return ActionResult(True, Action("BUY", "wheat"))
+
+    def reset_loop_state(self):
+        return None
 
     def buy_open_shop(self, limit=1, should_stop=None):
         from app.actions.farming import Action, ActionResult

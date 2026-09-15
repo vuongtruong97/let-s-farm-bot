@@ -42,6 +42,17 @@ def test_config_roundtrip(tmp_path: Path):
     assert loaded.allow_diamond_spending is False
     assert loaded.buy_threshold == 0.72
     assert loaded.news_threshold == 0.72
+    assert loaded.loop_rest_min == 5.0
+    assert loaded.action_wait_s == 0.9
+    assert loaded.buy_wait_s == 2.0
+
+    save_config(
+        AppConfig(adb_port=5625, debug=True, action_wait_s=1.5, buy_wait_s=3.0),
+        path,
+    )
+    loaded = load_config(path)
+    assert loaded.action_wait_s == 1.5
+    assert loaded.buy_wait_s == 3.0
 
 
 def test_valid_png_keeps_exec_out_bytes():

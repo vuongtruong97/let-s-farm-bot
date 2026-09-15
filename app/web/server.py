@@ -276,6 +276,10 @@ class BotWebHandler(BaseHTTPRequestHandler):
                 botdata.delete_library(unquote(parts[2]))
                 self._send_json(200, _state())
                 return
+            if len(parts) == 2 and parts[0] == "api" and parts[1] == "purchases":
+                botdata.clear_purchases()
+                self._send_json(200, _state())
+                return
             if len(parts) == 3 and parts[0] == "api" and parts[1] == "crops":
                 botdata.remove_crop(parts[2], delete_image=False)
                 self._send_json(200, _state())
@@ -344,6 +348,9 @@ def _config_dict(config: AppConfig | None = None) -> dict:
         "template_threshold": cfg.template_threshold,
         "buy_threshold": cfg.buy_threshold,
         "news_threshold": cfg.news_threshold,
+        "loop_rest_min": cfg.loop_rest_min,
+        "action_wait_s": cfg.action_wait_s,
+        "buy_wait_s": cfg.buy_wait_s,
     }
 
 
@@ -365,6 +372,15 @@ def _save_config(payload: dict) -> dict:
     news_threshold = float(payload.get("news_threshold", current.news_threshold))
     if not 0.5 <= news_threshold <= 0.90:
         raise ValueError("news_threshold must be 0.50–0.90")
+    loop_rest_min = float(payload.get("loop_rest_min", current.loop_rest_min))
+    if not 0 <= loop_rest_min <= 180:
+        raise ValueError("loop_rest_min must be 0–180")
+    action_wait_s = float(payload.get("action_wait_s", current.action_wait_s))
+    if not 0 <= action_wait_s <= 10:
+        raise ValueError("action_wait_s must be 0–10")
+    buy_wait_s = float(payload.get("buy_wait_s", current.buy_wait_s))
+    if not 0 <= buy_wait_s <= 10:
+        raise ValueError("buy_wait_s must be 0–10")
     swipe = int(payload.get("swipe_duration_ms", current.swipe_duration_ms))
     if swipe < 50 or swipe > 3000:
         raise ValueError("swipe_duration_ms must be 50–3000")
@@ -379,6 +395,9 @@ def _save_config(payload: dict) -> dict:
         template_threshold=threshold,
         buy_threshold=buy_threshold,
         news_threshold=news_threshold,
+        loop_rest_min=loop_rest_min,
+        action_wait_s=action_wait_s,
+        buy_wait_s=buy_wait_s,
     )
     save_config(updated)
     return _config_dict(updated)
@@ -393,6 +412,8 @@ def _state() -> dict:
         "library": botdata.list_library(),
         "macros": macrostore.list_macros(),
         "run": RUNTIME.snapshot(),
+        "purchases": botdata.list_purchases(),
+        "wishlist_buys": botdata.wishlist_buy_status(),
     }
 
 

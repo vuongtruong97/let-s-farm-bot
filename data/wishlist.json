@@ -27,7 +27,7 @@
   "thit_lon": {
     "template": "item_thit_lon",
     "news_template": "item_thit_lon_news",
-    "enabled": true
+    "enabled": false
   },
   "dinh_vit": {
     "template": "item_dinh_vit",
@@ -37,17 +37,17 @@
   "bo_sua": {
     "template": "item_bo_sua",
     "news_template": "item_bo_sua_news",
-    "enabled": true
+    "enabled": false
   },
   "so_do": {
     "template": "item_so_do",
     "news_template": "item_so_do_news",
-    "enabled": false
+    "enabled": true
   },
   "bua_mo_rong_dat": {
     "template": "item_bua_mo_rong_dat",
     "news_template": "item_bua_mo_rong_dat_news",
-    "enabled": false
+    "enabled": true
   },
   "day_chuyen": {
     "template": "item_day_chuyen",
@@ -58,5 +58,45 @@
     "template": "item_banh_pho_mai",
     "news_template": "item_banh_pho_mai_news",
     "enabled": false
+  },
+  "coc_mo_rong_dat": {
+    "template": "item_coc_mo_rong_dat",
+    "news_template": "item_coc_mo_rong_dat_news",
+    "enabled": true
+  },
+  "cua": {
+    "template": "item_cua",
+    "news_template": "item_cua_news",
+    "enabled": true
+  },
+  "ao": {
+    "template": "item_ao",
+    "news_template": "item_ao_news",
+    "enabled": false
+  },
+  "thanh_vang": {
+    "template": "item_thanh_vang",
+    "news_template": "item_thanh_vang_news",
+    "enabled": true
+  },
+  "van_go": {
+    "template": "item_van_go",
+    "news_template": "item_van_go_news",
+    "enabled": true
+  },
+  "pho_mai": {
+    "template": "item_pho_mai",
+    "news_template": "item_pho_mai_news",
+    "enabled": false
+  },
+  "xeng": {
+    "template": "item_xeng",
+    "news_template": "item_xeng_news",
+    "enabled": true
+  },
+  "riu": {
+    "template": "item_riu",
+    "news_template": "item_riu_news",
+    "enabled": true
   }
 }

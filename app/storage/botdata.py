@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -45,6 +46,92 @@ def crops_path() -> Path:
 
 def column_path() -> Path:
     return data_dir() / "column.json"
+
+
+MAX_PURCHASES = 200
+
+
+def purchases_path() -> Path:
+    return data_dir() / "purchases.json"
+
+
+def load_purchases() -> list[dict]:
+    data = load_json(purchases_path(), {"purchases": []})
+    rows = data.get("purchases")
+    if not isinstance(rows, list):
+        return []
+    out: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        item = str(row.get("item") or "").strip()
+        at = str(row.get("at") or "").strip()
+        kind = str(row.get("kind") or "match").strip()
+        if kind != "buy":
+            kind = "match"
+        if item and at:
+            out.append({"item": item, "at": at, "kind": kind})
+    return out
+
+
+def list_purchases(limit: int = 80) -> list[dict]:
+    cap = max(1, min(MAX_PURCHASES, int(limit)))
+    return load_purchases()[:cap]
+
+
+def wishlist_buy_status() -> list[dict]:
+    """Enabled wishlist items with stall-match and verified-buy history."""
+    matches: dict[str, list[dict]] = {}
+    buys: dict[str, list[dict]] = {}
+    for row in load_purchases():
+        item = row["item"]
+        event = {"at": row["at"]}
+        if row["kind"] == "buy":
+            buys.setdefault(item, []).append(event)
+        else:
+            matches.setdefault(item, []).append(event)
+    rows: list[dict] = []
+    for entry in wishlist_entries():
+        if not entry.get("enabled", True):
+            continue
+        item_id = entry["id"]
+        match_rows = matches.get(item_id, [])
+        buy_rows = buys.get(item_id, [])
+        rows.append(
+            {
+                "id": item_id,
+                "template": entry["template"],
+                "news_template": entry["news_template"],
+                "has_image": entry["has_image"],
+                "has_news_image": entry["has_news_image"],
+                "match_count": len(match_rows),
+                "buy_count": len(buy_rows),
+                "last_match_at": match_rows[0]["at"] if match_rows else None,
+                "last_buy_at": buy_rows[0]["at"] if buy_rows else None,
+                "matches": match_rows,
+                "buys": buy_rows,
+            }
+        )
+    return rows
+
+
+def record_purchase(
+    item: str, when: datetime | None = None, kind: str = "match"
+) -> dict:
+    stamp = when or datetime.now().astimezone()
+    event = "buy" if str(kind).strip() == "buy" else "match"
+    row = {
+        "item": str(item).strip() or "unknown",
+        "at": stamp.isoformat(timespec="seconds"),
+        "kind": event,
+    }
+    rows = [row, *load_purchases()][:MAX_PURCHASES]
+    save_json(purchases_path(), {"purchases": rows})
+    return row
+
+
+def clear_purchases() -> None:
+    save_json(purchases_path(), {"purchases": []})
 
 
 def load_column() -> tuple[int, int] | None:

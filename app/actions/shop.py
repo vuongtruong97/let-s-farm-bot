@@ -14,6 +14,7 @@ from app.storage.botdata import (
     item_news_template_name,
     load_column,
     load_wishlist,
+    record_purchase,
     save_column,
     save_library_png,
 )
@@ -45,7 +46,8 @@ class NewspaperActions:
         matcher: TemplateMatcher | None = None,
         news: NewspaperDetector | None = None,
         camera: CameraManager | None = None,
-        wait_s: float = 0.9,
+        wait_s: float | None = None,
+        buy_wait_s: float | None = None,
         visit_wait_s: float = 3.5,
         retries: int = 1,
     ):
@@ -59,11 +61,18 @@ class NewspaperActions:
             news_threshold=self.config.news_threshold,
         )
         self.camera = camera or CameraManager(device)
-        self.wait_s = wait_s
+        self.wait_s = (
+            float(self.config.action_wait_s) if wait_s is None else wait_s
+        )
+        self.buy_wait_s = (
+            float(self.config.buy_wait_s) if buy_wait_s is None else buy_wait_s
+        )
         self.visit_wait_s = visit_wait_s
         self.retries = retries
         self.wishlist = active_wishlist()
         self._visited_ads: set[tuple] = set()
+        self._planned_ads: list[tuple] = []
+        self._news_occupancy: tuple = ()
         self._news_left_page = NEWS_OPEN_LEFT_PAGE
 
     def _sync_vision_thresholds(self) -> None:
@@ -74,11 +83,12 @@ class NewspaperActions:
         self,
         limit: int = 1,
         should_stop=None,
-        mode: str = "shop",
+        mode: str = "follow",
         reset_home: bool = True,
+        until_done: bool = False,
     ) -> ActionResult:
-        kind = (mode or "shop").strip().lower()
-        if kind in {"browse", "xem"}:
+        kind = _shop_mode(mode)
+        if kind == "browse":
             return self.browse_newspaper(
                 limit=limit, should_stop=should_stop, reset_home=reset_home
             )
@@ -90,9 +100,16 @@ class NewspaperActions:
         self._sync_vision_thresholds()
         bought = 0
         visits = 0
-        max_visits = max(8, max(1, limit) * 6)
+        max_visits = (
+            max(80, NEWS_PAGE_COUNT * 12)
+            if until_done or kind == "sweep"
+            else max(8, max(1, limit) * 6)
+        )
         last = ActionResult(False, Action("BUY", "none"), "no purchase")
-        while bought < max(1, limit) and visits < max_visits:
+        exhausted = False
+        while visits < max_visits:
+            if not until_done and bought >= max(1, limit):
+                break
             if should_stop and should_stop():
                 return ActionResult(False, Action("STOP", "newspaper"), "stopped")
             visits += 1
@@ -103,9 +120,10 @@ class NewspaperActions:
             opened = self.open_newspaper()
             if not opened.success:
                 return opened
-            ad = self._next_ad()
+            ad = self._next_listing(kind)
             if ad is None:
-                return ActionResult(False, Action("VISIT_SHOP", "none"), "no newspaper ads")
+                exhausted = True
+                break
             visit = self.visit_shop(ad)
             if not visit.success:
                 self.close_shop()
@@ -118,11 +136,31 @@ class NewspaperActions:
             closed = self.close_shop()
             if not closed.success and last.success:
                 last = closed
-        if last.success or bought:
+        if last.success or bought or exhausted:
             parked = self.go_home()
             if not parked.success:
                 return parked
+        if until_done:
+            self.reset_loop_state()
+        if until_done and exhausted:
+            return ActionResult(True, Action("VISIT_SHOP", "done"), "all shops done")
+        if exhausted and not last.success and not bought:
+            return ActionResult(
+                False,
+                Action("VISIT_SHOP", "none"),
+                "no newspaper ads",
+            )
         return last
+
+    def reset_loop_state(self) -> None:
+        """Drop visited/plan memory so the next cycle scans the newspaper fresh."""
+        self._visited_ads.clear()
+        self._planned_ads = []
+        self._news_occupancy = ()
+        self._news_left_page = NEWS_OPEN_LEFT_PAGE
+        if self.camera is not None:
+            self.camera.clear_history()
+        log.info("NEWS reset loop state")
 
     def browse_newspaper(
         self, limit: int = 1, should_stop=None, reset_home: bool = True
@@ -331,10 +369,7 @@ class NewspaperActions:
             )
         png = self.device.screenshot()
         screen = self.screens.detect(png)
-        if screen.screen is GameScreen.POPUP:
-            self._close_popup(screen)
-            return ActionResult(False, Action("BUY", "none"), "popup open")
-        if screen.screen is not GameScreen.PLAYER_SHOP:
+        if screen.screen not in (GameScreen.PLAYER_SHOP, GameScreen.POPUP):
             return ActionResult(
                 False, Action("BUY", "none"), f"screen={screen.screen.value}"
             )
@@ -343,15 +378,32 @@ class NewspaperActions:
             return ActionResult(False, Action("STOP", "buy"), "stopped")
         last = ActionResult(False, Action("BUY", "none"), "no wishlist slot")
         bought = 0
+        matched: set[str] = set()
+        skipped: list[ShopSlot] = []
         for _ in range(STALL_PAN_MAX + 1):
             if should_stop and should_stop():
                 return ActionResult(False, Action("STOP", "buy"), "stopped")
-            slots = self.news.find_slots(png, ready)
+            slots = [
+                slot
+                for slot in self.news.find_slots(png, ready)
+                if not _slot_skipped(slot, skipped)
+            ]
             if slots:
                 for slot in slots:
-                    last = self._buy_one(slot)
-                    if not last.success:
-                        return last
+                    if slot.item not in matched:
+                        matched.add(slot.item)
+                        record_purchase(slot.item, kind="match")
+                        log.info(f"WISH match {slot.item} in stall")
+                    result = self._buy_one(slot)
+                    if not result.success:
+                        skipped.append(slot)
+                        if not bought:
+                            last = result
+                        log.info(f"BUY skip {slot.item} {result.error or 'fail'}")
+                        png = self.device.screenshot()
+                        continue
+                    record_purchase(slot.item, kind="buy")
+                    last = result
                     bought += 1
                     if max_buys is not None and bought >= max_buys:
                         return last
@@ -361,8 +413,9 @@ class NewspaperActions:
             if not moved:
                 break
         if not bought:
-            log.info(f"BUY no slot matched missing={missing}")
-            return ActionResult(False, Action("BUY", "none"), "no wishlist slot")
+            if last.error == "no wishlist slot":
+                log.info(f"BUY no slot matched missing={missing}")
+            return last
         return last
 
     def buy_open_shop(self, limit: int = 1, should_stop=None) -> ActionResult:
@@ -522,12 +575,11 @@ class NewspaperActions:
     def _buy_one(self, slot: ShopSlot) -> ActionResult:
         action = Action("BUY", slot.item, *slot.center, crop=slot.item)
         self.device.tap(*slot.center)
-        time.sleep(self.wait_s)
+        time.sleep(self.buy_wait_s)
         after = self.device.screenshot()
-        after_screen = self.screens.detect(after)
-        if after_screen.screen is GameScreen.POPUP:
-            self._close_popup(after_screen)
-            return ActionResult(False, action, "diamond/popup — closed, not spent")
+        if self.news.slot_sold(after, slot, had_coin=slot.has_coin):
+            log.info(f"BUY {slot.item} SUCCESS sold")
+            return ActionResult(True, action)
         after_slots = self.news.find_slots(after, self.wishlist)
         still = [
             s for s in after_slots if s.item == slot.item and _overlap(s, slot) > 0.4
@@ -537,6 +589,107 @@ class NewspaperActions:
         log.info(f"BUY {slot.item} SUCCESS")
         return ActionResult(True, action)
 
+    def _next_listing(self, mode: str) -> DetectedObject | None:
+        remaining = self._planned_remaining()
+        if remaining:
+            log.info(f"NEWS reuse plan remaining={len(remaining)} next={remaining[0]}")
+            return self._seek_next_planned()
+        png = self.device.screenshot()
+        if self._plan_needs_refresh(png):
+            self._rescan_plan(mode, first_png=png)
+            self.close_shop()
+            if not self._planned_remaining():
+                return None
+            opened = self.open_newspaper()
+            if not opened.success:
+                return None
+        return self._seek_next_planned()
+
+    def _plan_needs_refresh(self, png) -> bool:
+        if not self._planned_ads:
+            return True
+        occupancy = self._spread_occupancy(png)
+        if occupancy != self._news_occupancy:
+            log.info(
+                f"NEWS changed occupancy {self._news_occupancy} -> {occupancy}"
+            )
+            return True
+        log.info("NEWS same paper, plan done")
+        return False
+
+    def _spread_occupancy(self, png) -> tuple:
+        ads = self.news.find_ads(png, left_page=self._news_left_page)
+        return tuple(self._ad_cell(ad) for ad in ads)
+
+    def _planned_remaining(self) -> list[tuple]:
+        return [cell for cell in self._planned_ads if cell not in self._visited_ads]
+
+    def _rescan_plan(self, mode: str, first_png) -> None:
+        self._visited_ads.clear()
+        self._planned_ads = []
+        self._news_occupancy = self._spread_occupancy(first_png)
+        wishlist_cells: list[tuple] = []
+        coin_cells: list[tuple] = []
+        png = first_png
+        while True:
+            self._collect_spread(png, wishlist_cells, coin_cells)
+            if self._news_left_page >= NEWS_PAGE_COUNT:
+                break
+            self._turn_newspaper()
+            png = self.device.screenshot()
+        if mode == "sweep":
+            seen = set(wishlist_cells)
+            self._planned_ads = wishlist_cells + [c for c in coin_cells if c not in seen]
+        else:
+            self._planned_ads = list(wishlist_cells)
+        log.info(f"NEWS plan {mode} n={len(self._planned_ads)} {self._planned_ads}")
+
+    def _collect_spread(
+        self, png, wishlist_cells: list[tuple], coin_cells: list[tuple]
+    ) -> None:
+        ads = self.news.find_ads(png, left_page=self._news_left_page)
+        matched = self.news.find_wishlist_ads(
+            png, self.wishlist, left_page=self._news_left_page, ads=ads
+        )
+        seen_wish = set(wishlist_cells)
+        for ad, item in matched:
+            cell = self._ad_cell(ad)
+            if cell in seen_wish:
+                continue
+            seen_wish.add(cell)
+            wishlist_cells.append(cell)
+            log.info(f"NEWS plan wishlist {item} {cell}")
+        seen_coin = set(coin_cells)
+        for ad in ads:
+            cell = self._ad_cell(ad)
+            if cell in seen_wish or cell in seen_coin:
+                continue
+            seen_coin.add(cell)
+            coin_cells.append(cell)
+
+    def _seek_next_planned(self) -> DetectedObject | None:
+        for cell in self._planned_remaining():
+            target_left = _spread_left(cell[0])
+            while self._news_left_page < target_left:
+                self._turn_newspaper()
+            ad = self._ad_from_cell(cell)
+            if ad is None:
+                log.info(f"VISIT_SHOP missing cell {cell} on spread {self._news_left_page}")
+                continue
+            log.info(f"VISIT_SHOP planned {cell}")
+            return ad
+        return None
+
+    def _ad_from_cell(self, cell: tuple) -> DetectedObject | None:
+        page, slot = cell[0], cell[1]
+        width, height = self.device.resolution()
+        for p, s, x, y, w, h in news_spread_slots(
+            width, height, self._news_left_page
+        ):
+            if p == page and s == slot:
+                return DetectedObject("newspaper", x, y, w, h, 1.0, "ad")
+        return None
+
     def _next_ad(self) -> DetectedObject | None:
         png = self.device.screenshot()
         wanted = self._unused_wishlist_ad(png)
@@ -545,6 +698,18 @@ class NewspaperActions:
         while self._news_left_page < NEWS_PAGE_COUNT:
             self._turn_newspaper()
             wanted = self._unused_wishlist_ad(self.device.screenshot())
+            if wanted is not None:
+                return wanted
+        return None
+
+    def _next_coin_ad(self) -> DetectedObject | None:
+        png = self.device.screenshot()
+        wanted = self._unused_coin_ad(png)
+        if wanted is not None:
+            return wanted
+        while self._news_left_page < NEWS_PAGE_COUNT:
+            self._turn_newspaper()
+            wanted = self._unused_coin_ad(self.device.screenshot())
             if wanted is not None:
                 return wanted
         return None
@@ -570,6 +735,16 @@ class NewspaperActions:
                 log.info(f"VISIT_SHOP skip visited {cell}")
                 continue
             log.info(f"VISIT_SHOP match {item} ad={ad.x},{ad.y} cell={cell}")
+            return ad
+        return None
+
+    def _unused_coin_ad(self, png) -> DetectedObject | None:
+        for ad in self.news.find_ads(png, left_page=self._news_left_page):
+            cell = self._ad_cell(ad)
+            if cell in self._visited_ads:
+                log.info(f"VISIT_SHOP skip visited {cell}")
+                continue
+            log.info(f"VISIT_SHOP coin ad={ad.x},{ad.y} cell={cell}")
             return ad
         return None
 
@@ -624,6 +799,21 @@ class NewspaperActions:
         save_overlay(png, combined, dest.with_name(name.replace(".png", "_overlay.png")))
 
 
+def _shop_mode(mode: str | None) -> str:
+    kind = (mode or "follow").strip().lower()
+    if kind in {"browse", "xem"}:
+        return "browse"
+    if kind == "sweep":
+        return "sweep"
+    return "follow"
+
+
+def _spread_left(page: int) -> int:
+    if page >= NEWS_PAGE_COUNT:
+        return NEWS_PAGE_COUNT
+    return page if page % 2 == 0 else page - 1
+
+
 def _center(obj: DetectedObject) -> tuple[int, int]:
     return obj.x + obj.width // 2, obj.y + obj.height // 2
 
@@ -636,3 +826,7 @@ def _overlap(a: ShopSlot, b: ShopSlot) -> float:
     inter = max(0, x2 - x1) * max(0, y2 - y1)
     union = a.width * a.height + b.width * b.height - inter
     return inter / union if union else 0.0
+
+
+def _slot_skipped(slot: ShopSlot, skipped: list[ShopSlot]) -> bool:
+    return any(_overlap(slot, seen) > 0.4 for seen in skipped)

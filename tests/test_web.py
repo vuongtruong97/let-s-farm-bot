@@ -57,6 +57,63 @@ def test_upsert_item_writes_png_and_wishlist(data_home: Path):
     assert (data_home / "library" / "shop_01.png").is_file()
 
 
+def test_record_purchase_newest_first(data_home: Path):
+    from datetime import datetime, timedelta, timezone
+
+    tz = timezone(timedelta(hours=7))
+    botdata.upsert_item("egg", enabled=True)
+    botdata.upsert_item("screw", enabled=True)
+    first = botdata.record_purchase("egg", when=datetime(2026, 9, 14, 10, 0, 0, tzinfo=tz))
+    second = botdata.record_purchase("screw", when=datetime(2026, 9, 14, 11, 30, 5, tzinfo=tz))
+    assert first["at"].startswith("2026-09-14T10:00:00")
+    rows = botdata.list_purchases()
+    assert [row["item"] for row in rows] == ["screw", "egg"]
+    assert rows[0]["at"] == second["at"]
+    assert rows[0]["kind"] == "match"
+    status = {row["id"]: row for row in botdata.wishlist_buy_status()}
+    assert status["egg"]["match_count"] == 1
+    assert status["egg"]["buy_count"] == 0
+    assert status["egg"]["last_match_at"] == first["at"]
+    assert status["egg"]["last_buy_at"] is None
+    assert status["screw"]["last_match_at"] == second["at"]
+    assert status["wheat"]["match_count"] == 0
+    assert status["wheat"]["buy_count"] == 0
+    botdata.record_purchase("egg", when=datetime(2026, 9, 14, 12, 0, 0, tzinfo=tz), kind="buy")
+    status = {row["id"]: row for row in botdata.wishlist_buy_status()}
+    assert status["egg"]["match_count"] == 1
+    assert status["egg"]["buy_count"] == 1
+    assert status["egg"]["buys"][0]["at"].startswith("2026-09-14T12:00:00")
+    botdata.clear_purchases()
+    assert botdata.list_purchases() == []
+    cleared = {row["id"]: row for row in botdata.wishlist_buy_status()}
+    assert cleared["egg"]["match_count"] == 0
+    assert cleared["egg"]["buy_count"] == 0
+    assert cleared["egg"]["last_buy_at"] is None
+
+
+def test_legacy_purchase_without_kind_counts_as_match(data_home: Path):
+    botdata.upsert_item("wheat", enabled=True)
+    botdata.save_json(
+        botdata.purchases_path(),
+        {"purchases": [{"item": "wheat", "at": "2026-09-14T10:00:00+07:00"}]},
+    )
+    status = {row["id"]: row for row in botdata.wishlist_buy_status()}
+    assert status["wheat"]["match_count"] == 1
+    assert status["wheat"]["buy_count"] == 0
+    assert status["wheat"]["matches"][0]["at"].startswith("2026-09-14T10:00:00")
+
+
+def test_delete_purchases_api(httpd: str, data_home: Path):
+    botdata.record_purchase("wheat")
+    code, body = _request(f"{httpd}/api/purchases", "DELETE")
+    assert code == 200
+    assert body["purchases"] == []
+    wheat = next(row for row in body["wishlist_buys"] if row["id"] == "wheat")
+    assert wheat["match_count"] == 0
+    assert wheat["buy_count"] == 0
+    assert wheat["last_buy_at"] is None
+
+
 def test_update_item_renames_id_and_png(data_home: Path):
     botdata.upsert_item("wheat", image_b64=_png_b64((24, 20)), enabled=False)
     botdata.update_item("wheat", news_image_b64=_png_b64((16, 16), (90, 90, 90, 255)))
@@ -162,6 +219,11 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     assert state["config"]["allow_diamond_spending"] is False
     assert state["wishlist"][0]["id"] == "wheat"
     assert state["wishlist"][0]["has_image"] is False
+    assert state["purchases"] == []
+    assert state["wishlist_buys"][0]["id"] == "wheat"
+    assert state["wishlist_buys"][0]["match_count"] == 0
+    assert state["wishlist_buys"][0]["buy_count"] == 0
+    assert state["wishlist_buys"][0]["last_buy_at"] is None
 
     code, page = _request(f"{httpd}/")
     assert code == 200
@@ -186,6 +248,12 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     assert b"find_column" in page
     assert b"scan_ads" in page
     assert b"go_home" in page
+    assert b"buy-log" in page
+    assert "Lịch sử mua".encode("utf-8") in page
+    assert b"btn-buy-reset" in page
+    assert b"buy-history-modal" in page
+    assert b"action_wait_s" in page
+    assert b"buy_wait_s" in page
 
     code, saved = _request(
         f"{httpd}/api/items",
@@ -227,6 +295,9 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
             "template_threshold": 0.81,
             "buy_threshold": 0.65,
             "news_threshold": 0.78,
+            "loop_rest_min": 5,
+            "action_wait_s": 1.2,
+            "buy_wait_s": 2.5,
         },
     )
     assert code == 200
@@ -234,6 +305,9 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     assert cfg["config"]["adb_port"] == 5625
     assert cfg["config"]["buy_threshold"] == 0.65
     assert cfg["config"]["news_threshold"] == 0.78
+    assert cfg["config"]["loop_rest_min"] == 5.0
+    assert cfg["config"]["action_wait_s"] == 1.2
+    assert cfg["config"]["buy_wait_s"] == 2.5
 
     code, err = _request(
         f"{httpd}/api/items",
@@ -366,10 +440,15 @@ class _StubNews:
     def __init__(self, device, config=None, **kwargs):
         pass
 
-    def shop_from_newspaper(self, limit=1, should_stop=None, mode="shop", reset_home=True):
+    def shop_from_newspaper(
+        self, limit=1, should_stop=None, mode="shop", reset_home=True, until_done=False
+    ):
         from app.actions.farming import Action, ActionResult
 
         return ActionResult(True, Action("BUY", "wheat"))
+
+    def reset_loop_state(self):
+        return None
 
     def buy_open_shop(self, limit=1, should_stop=None):
         from app.actions.farming import Action, ActionResult
@@ -498,4 +577,121 @@ def test_web_run_newspaper_step(httpd: str, data_home: Path, monkeypatch: pytest
     snap = _wait_idle(rt)
     assert snap["last_result"]["action"] == "SCAN_ADS"
     assert snap["last_result"]["ok"] is True
+
+
+def test_news_mode_follow_sweep_and_aliases():
+    from app.web.runtime import _news_mode
+
+    assert _news_mode({}) == "follow"
+    assert _news_mode({"news_mode": "shop"}) == "follow"
+    assert _news_mode({"mode": "buy"}) == "follow"
+    assert _news_mode({"news_mode": "sweep"}) == "sweep"
+    assert _news_mode({"news_mode": "browse"}) == "browse"
+    with pytest.raises(ValueError, match="follow, sweep, or browse"):
+        _news_mode({"news_mode": "nope"})
+
+
+def test_loop_rest_min_clamps():
+    from app.web.runtime import _loop_rest_min
+
+    assert _loop_rest_min({"loop_rest_min": 3}) == 3.0
+    assert _loop_rest_min({"loop_rest_min": 999}) == 180.0
+    assert _loop_rest_min({"loop_rest_min": -2}) == 0.0
+
+
+def test_web_loop_visits_all_shops_then_rests(
+    httpd: str, data_home: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from app.actions.farming import Action, ActionResult
+    from app.web.runtime import BotRuntime
+
+    seen: dict = {}
+    rests: list[float] = []
+
+    class News(_StubNews):
+        def shop_from_newspaper(
+            self, limit=1, should_stop=None, mode="shop", reset_home=True, until_done=False
+        ):
+            seen["until_done"] = until_done
+            seen["mode"] = mode
+            return ActionResult(True, Action("VISIT_SHOP", "done"))
+
+    def fake_rest(self, minutes):
+        rests.append(minutes)
+        self.stop_event.set()
+
+    monkeypatch.setattr(BotRuntime, "_rest_minutes", fake_rest)
+    rt = BotRuntime(
+        device_factory=lambda cfg: _FakeCtl(),
+        farming_cls=_StubFarming,
+        newspaper_cls=News,
+        loop_pause_s=0.05,
+    )
+    monkeypatch.setattr("app.web.server.RUNTIME", rt)
+    code, body = _request(
+        f"{httpd}/api/run",
+        "POST",
+        {
+            "action": "loop",
+            "harvest": False,
+            "plant": False,
+            "newspaper": True,
+            "news_mode": "sweep",
+            "loop_rest_min": 7,
+        },
+    )
+    assert code == 200
+    snap = _wait_idle(rt, timeout=3)
+    assert snap["status"] == "idle"
+    assert seen["until_done"] is True
+    assert seen["mode"] == "sweep"
+    assert rests == [7.0]
+
+
+def test_web_loop_skips_rest_when_column_not_found(
+    httpd: str, data_home: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from app.actions.farming import Action, ActionResult
+    from app.web.runtime import BotRuntime
+
+    rests: list[float] = []
+
+    class News(_StubNews):
+        def shop_from_newspaper(
+            self, limit=1, should_stop=None, mode="shop", reset_home=True, until_done=False
+        ):
+            return ActionResult(
+                False, Action("FIND_COLUMN", "newspaper_stand"), "newspaper stand not found"
+            )
+
+    def fake_rest(self, minutes):
+        rests.append(minutes)
+        self.stop_event.set()
+
+    monkeypatch.setattr(BotRuntime, "_rest_minutes", fake_rest)
+    rt = BotRuntime(
+        device_factory=lambda cfg: _FakeCtl(),
+        farming_cls=_StubFarming,
+        newspaper_cls=News,
+        loop_pause_s=0.05,
+    )
+    monkeypatch.setattr("app.web.server.RUNTIME", rt)
+    code, body = _request(
+        f"{httpd}/api/run",
+        "POST",
+        {
+            "action": "loop",
+            "harvest": False,
+            "plant": False,
+            "newspaper": True,
+            "news_mode": "sweep",
+            "loop_rest_min": 7,
+        },
+    )
+    assert code == 200
+    time.sleep(0.2)
+    rt.stop()
+    snap = _wait_idle(rt, timeout=3)
+    assert snap["status"] == "idle"
+    assert rests == []
 

@@ -45,7 +45,7 @@ class FarmingActions:
         fields: FieldDetector | None = None,
         screens: ScreenDetector | None = None,
         matcher: TemplateMatcher | None = None,
-        wait_s: float = 0.9,
+        wait_s: float | None = None,
         retries: int = 1,
     ):
         self.device = device
@@ -53,7 +53,9 @@ class FarmingActions:
         self.fields = fields or FieldDetector()
         self.screens = screens or ScreenDetector()
         self.matcher = matcher or TemplateMatcher(threshold=self.config.template_threshold)
-        self.wait_s = wait_s
+        self.wait_s = (
+            float(self.config.action_wait_s) if wait_s is None else wait_s
+        )
         self.retries = retries
         self.crops = load_crops()
 

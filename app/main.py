@@ -61,9 +61,9 @@ def build_parser() -> argparse.ArgumentParser:
     newspaper.add_argument("--limit", type=int, default=1)
     newspaper.add_argument(
         "--mode",
-        choices=["browse", "shop"],
-        default="shop",
-        help="browse = chỉ lật tin trên báo; shop = ghé shop rồi mua",
+        choices=["browse", "follow", "sweep", "shop"],
+        default="follow",
+        help="follow = ghé tin wishlist; sweep = hết wishlist rồi mọi shop có xu; browse = chỉ lật tin",
     )
 
     sub.add_parser("shop-buy", help="Buy wishlist items on the already-open player shop")

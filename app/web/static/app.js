@@ -127,8 +127,12 @@ function fillConfig(cfg) {
   $("template_threshold").value = cfg.template_threshold;
   $("buy_threshold").value = cfg.buy_threshold ?? 0.72;
   $("news_threshold").value = cfg.news_threshold ?? 0.72;
+  $("loop_rest_min").value = cfg.loop_rest_min ?? 5;
+  $("action_wait_s").value = cfg.action_wait_s ?? 0.9;
+  $("buy_wait_s").value = cfg.buy_wait_s ?? 2;
   $("swipe_duration_ms").value = cfg.swipe_duration_ms;
   $("debug").checked = Boolean(cfg.debug);
+  if ($("run-rest-min")) $("run-rest-min").value = cfg.loop_rest_min ?? 5;
 }
 
 function itemCard(item) {
@@ -232,6 +236,7 @@ function render(state) {
   }
   renderMacros(state);
   if (state.run) renderRun(state.run);
+  if (Array.isArray(state.wishlist_buys)) renderWishlistBuys(state.wishlist_buys);
 }
 
 async function refresh() {
@@ -246,6 +251,7 @@ function schedulePoll(running) {
       const state = await api("/api/state");
       renderMacros(state);
       if (state.run) renderRun(state.run);
+      if (Array.isArray(state.wishlist_buys)) renderWishlistBuys(state.wishlist_buys);
       const rec = state.run && state.run.recording && state.run.recording.active;
       schedulePoll(state.run && (state.run.status === "running" || rec));
     } catch (err) {
@@ -299,8 +305,73 @@ function renderRun(run) {
   }
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function formatBuyTime(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso || "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
+}
+
+function renderWishlistBuys(rows) {
+  const el = $("buy-log");
+  if (!el) return;
+  lastWishlistBuys = Array.isArray(rows) ? rows : [];
+  if (!lastWishlistBuys.length) {
+    el.innerHTML = `<tr><td colspan="3" class="muted">Chưa có item wishlist đang bật</td></tr>`;
+    return;
+  }
+  el.innerHTML = lastWishlistBuys
+    .map((row) => {
+      const src = row.has_image
+        ? `/api/templates/${row.template}.png?t=1`
+        : row.has_news_image
+          ? `/api/templates/${row.news_template}.png?t=1`
+          : "";
+      const thumb = src
+        ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(row.id)}" />`
+        : `<span class="ph">?</span>`;
+      const matches = Number(row.match_count) || 0;
+      const buys = Number(row.buy_count) || 0;
+      const matchCell =
+        matches > 0
+          ? `<button type="button" class="buy-count" data-hist="match" data-id="${escapeHtml(row.id)}">${matches}</button>`
+          : `<span class="buy-count zero">0</span>`;
+      const buyCell =
+        buys > 0
+          ? `<button type="button" class="buy-count" data-hist="buy" data-id="${escapeHtml(row.id)}">${buys}</button>`
+          : `<span class="buy-count zero">0</span>`;
+      return `<tr>
+        <td><div class="item">${thumb}<b>${escapeHtml(row.id)}</b></div></td>
+        <td>${matchCell}</td>
+        <td>${buyCell}</td>
+      </tr>`;
+    })
+    .join("");
+}
+
+function openBuyHistory(itemId, kind) {
+  const row = lastWishlistBuys.find((entry) => entry.id === itemId);
+  const events = row ? (kind === "buy" ? row.buys : row.matches) || [] : [];
+  if (!row || !events.length) return;
+  $("buy-history-title").textContent = kind === "buy" ? "Lần mua thành công" : "Lần khớp wishlist";
+  $("buy-history-item").textContent = row.id;
+  $("buy-history-list").innerHTML = events
+    .map((ev) => `<li>${escapeHtml(formatBuyTime(ev.at))}</li>`)
+    .join("");
+  $("buy-history-modal").showModal();
+}
+
 let lastStepsKey = "";
 let lastMacroListKey = "";
+let lastWishlistBuys = [];
 
 function stepLabel(step) {
   if (step.type === "tap") return `tap ${step.x},${step.y}`;
@@ -374,11 +445,12 @@ function frameToDevice(img, clientX, clientY) {
 function applyRunState(state) {
   renderMacros(state);
   if (state.run) renderRun(state.run);
+  if (Array.isArray(state.wishlist_buys)) renderWishlistBuys(state.wishlist_buys);
 }
 
 function newsMode() {
   const el = document.querySelector("input[name=news-mode]:checked");
-  return (el && el.value) || "shop";
+  return (el && el.value) || "follow";
 }
 
 function runPayload(action, extra) {
@@ -390,6 +462,7 @@ function runPayload(action, extra) {
     news_mode: newsMode(),
     crop: $("run-crop").value || "wheat",
     limit: Number($("run-limit").value) || 1,
+    loop_rest_min: Number($("run-rest-min").value),
     ...extra,
   };
 }
@@ -397,6 +470,7 @@ function runPayload(action, extra) {
 const RUN_LABELS = {
   loop: "vòng lặp",
   go_home: "Về nhà",
+  rest: "Nghỉ giữa vòng",
   find_column: "Tìm cột báo",
   open_newspaper: "Mở báo",
   scan_ads: "Quét tin",
@@ -435,6 +509,26 @@ $("btn-stop").addEventListener("click", async () => {
   } catch (err) {
     toast(err.message, true);
   }
+});
+
+$("btn-buy-reset").addEventListener("click", async () => {
+  try {
+    const state = await api("/api/purchases", { method: "DELETE" });
+    if (Array.isArray(state.wishlist_buys)) renderWishlistBuys(state.wishlist_buys);
+    toast("Đã xóa lịch sử mua");
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+$("buy-log").addEventListener("click", (ev) => {
+  const btn = ev.target.closest("[data-hist]");
+  if (!btn || !$("buy-log").contains(btn)) return;
+  openBuyHistory(btn.dataset.id, btn.dataset.hist);
+});
+$("buy-history-close").addEventListener("click", () => $("buy-history-modal").close());
+$("buy-history-modal").addEventListener("click", (ev) => {
+  if (ev.target === $("buy-history-modal")) $("buy-history-modal").close();
 });
 
 $("btn-record").addEventListener("click", async () => {
@@ -872,6 +966,9 @@ $("config-form").addEventListener("submit", async (ev) => {
         template_threshold: Number($("template_threshold").value),
         buy_threshold: Number($("buy_threshold").value),
         news_threshold: Number($("news_threshold").value),
+        loop_rest_min: Number($("loop_rest_min").value),
+        action_wait_s: Number($("action_wait_s").value),
+        buy_wait_s: Number($("buy_wait_s").value),
         swipe_duration_ms: Number($("swipe_duration_ms").value),
         debug: $("debug").checked,
       }),

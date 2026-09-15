@@ -367,6 +367,10 @@ class BotRuntime:
             if news_det is not None:
                 news_det.buy_threshold = cfg.buy_threshold
                 news_det.news_threshold = cfg.news_threshold
+            if hasattr(self._news, "wait_s"):
+                self._news.wait_s = cfg.action_wait_s
+            if hasattr(self._news, "buy_wait_s"):
+                self._news.buy_wait_s = cfg.buy_wait_s
             if hasattr(self._news, "wishlist"):
                 from app.storage.botdata import active_wishlist
 
@@ -446,11 +450,22 @@ class BotRuntime:
         )
         self._store_action(result)
 
-    def _newspaper(self, limit: int, mode: str = "shop", reset_home: bool = True) -> None:
+    def _newspaper(
+        self,
+        limit: int,
+        mode: str = "shop",
+        reset_home: bool = True,
+        until_done: bool = False,
+    ) -> ActionResult:
         result = self._newspaper_actor().shop_from_newspaper(
-            limit=limit, should_stop=self._stopped, mode=mode, reset_home=reset_home
+            limit=limit,
+            should_stop=self._stopped,
+            mode=mode,
+            reset_home=reset_home,
+            until_done=until_done,
         )
         self._store_action(result)
+        return result
 
     def _loop(self, payload: dict) -> None:
         harvest = bool(payload.get("harvest", True))
@@ -459,6 +474,7 @@ class BotRuntime:
         crop = str(payload.get("crop") or "wheat")
         limit = _limit(payload)
         news_mode = _news_mode(payload)
+        rest_min = _loop_rest_min(payload)
         while not self._stopped():
             if not self._ensure_home():
                 break
@@ -477,12 +493,33 @@ class BotRuntime:
             if self._stopped():
                 break
             if newspaper:
-                self._newspaper(limit, news_mode, reset_home=False)
-            if self._stopped():
-                break
-            if self.loop_pause_s:
+                result = self._newspaper(
+                    limit, news_mode, reset_home=False, until_done=True
+                )
+                if self._stopped():
+                    break
+                if _newspaper_cycle_done(result):
+                    self._rest_minutes(rest_min)
+                else:
+                    log.info(
+                        "LOOP skip rest — "
+                        f"{result.action.type} {result.error or result.action.target}"
+                    )
+                    if self.loop_pause_s:
+                        time.sleep(self.loop_pause_s)
+            elif self.loop_pause_s:
                 time.sleep(self.loop_pause_s)
         self._set_result(True, "STOP" if self._stopped() else "LOOP", "done")
+
+    def _rest_minutes(self, minutes: float) -> None:
+        seconds = max(0.0, float(minutes) * 60.0)
+        if seconds <= 0:
+            return
+        log.info(f"LOOP rest {minutes:g} min")
+        self._set_result(True, "REST", f"{minutes:g} min")
+        end = time.monotonic() + seconds
+        while time.monotonic() < end and not self._stopped():
+            time.sleep(min(1.0, end - time.monotonic()))
 
     def _store_action(self, result: ActionResult) -> None:
         with self.lock:
@@ -542,12 +579,34 @@ def _limit(payload: dict) -> int:
 
 
 def _news_mode(payload: dict) -> str:
-    kind = str(payload.get("news_mode") or payload.get("mode") or "shop").strip().lower()
+    kind = str(payload.get("news_mode") or payload.get("mode") or "follow").strip().lower()
     if kind in {"browse", "xem"}:
         return "browse"
-    if kind in {"shop", "buy", ""}:
-        return "shop"
-    raise ValueError("news_mode must be browse or shop")
+    if kind in {"follow", "shop", "buy", ""}:
+        return "follow"
+    if kind == "sweep":
+        return "sweep"
+    raise ValueError("news_mode must be follow, sweep, or browse")
+
+
+def _loop_rest_min(payload: dict) -> float:
+    raw = payload.get("loop_rest_min", payload.get("rest_min"))
+    if raw is None or raw == "":
+        return float(load_config().loop_rest_min)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = float(load_config().loop_rest_min)
+    return max(0.0, min(180.0, value))
+
+
+def _newspaper_cycle_done(result: ActionResult) -> bool:
+    """True only after every planned shop was visited — not column/open failures."""
+    if not result.success:
+        return False
+    if result.action.type == "VISIT_SHOP" and result.action.target == "done":
+        return True
+    return result.error == "all shops done"
 
 
 def _gesture_step(kind: str, payload: dict) -> dict:
