@@ -34,6 +34,14 @@ LIME_HI = (70, 255, 255)
 MIN_LIME_PX = 80
 SOLD_SAT_MAX = 50
 PRICE_NEAR_PAD = (12, 8, 56, 56)
+QTY_PAD_LEFT = 0.85
+QTY_PAD_UP = 1.05
+QTY_PAD_RIGHT = 0.45
+QTY_PAD_DOWN = 0.35
+PROOF_PAD_RIGHT = 1.15
+PROOF_PAD_DOWN = 1.05
+QTY_X_THRESHOLD = 0.70
+QTY_SCALES = (0.7, 0.85, 1.0, 1.15, 1.3, 1.5)
 
 
 @dataclass
@@ -309,6 +317,38 @@ class NewspaperDetector:
         hit = self._match(source, "shop_header")
         return match_to_object(hit) if hit else None
 
+    def read_crate_qty(self, source, slot: ShopSlot) -> int | None:
+        """Stack size painted as xN on the crate rim. None if unread."""
+        if "qty_x" not in self.matcher.names:
+            return None
+        image = source if isinstance(source, np.ndarray) else as_bgr(source)
+        box = qty_roi_box(slot, image.shape)
+        if box is None:
+            return None
+        x, y, w, h = box
+        roi = image[y : y + h, x : x + w]
+        hit = self.matcher.match_one(
+            roi, "qty_x", threshold=QTY_X_THRESHOLD, scales=QTY_SCALES
+        )
+        if hit is None:
+            return None
+        sx = hit.x + int(hit.width * 0.72)
+        sy1 = max(0, hit.y - 2)
+        sy2 = min(roi.shape[0], hit.y + hit.height + 2)
+        if sx >= roi.shape[1] or sy2 <= sy1:
+            return None
+        strip = roi[sy1:sy2, sx:]
+        digits = _qty_digits(strip, hit.height, hit.width)
+        if not digits:
+            return None
+        try:
+            qty = int("".join(digits))
+        except ValueError:
+            return None
+        if 1 <= qty <= 999:
+            return qty
+        return None
+
     def _match(self, source, name: str) -> TemplateMatch | None:
         image = source if isinstance(source, np.ndarray) else as_bgr(source)
         return self.matcher.match_one(image, name)
@@ -321,6 +361,138 @@ def _slot_crop(image: np.ndarray, x: int, y: int, w: int, h: int) -> np.ndarray:
     if x2 <= x1 or y2 <= y1:
         return image[0:0, 0:0]
     return image[y1:y2, x1:x2]
+
+
+def _expand_slot_box(
+    slot: ShopSlot,
+    shape: tuple[int, ...],
+    *,
+    left: float,
+    up: float,
+    right: float,
+    down: float,
+) -> tuple[int, int, int, int] | None:
+    ih, iw = shape[:2]
+    x1 = max(0, int(slot.x - left * slot.width))
+    y1 = max(0, int(slot.y - up * slot.height))
+    x2 = min(iw, int(slot.x + right * slot.width))
+    y2 = min(ih, int(slot.y + down * slot.height))
+    if x2 - x1 < 8 or y2 - y1 < 8:
+        return None
+    return x1, y1, x2 - x1, y2 - y1
+
+
+def qty_roi_box(slot: ShopSlot, shape: tuple[int, ...]) -> tuple[int, int, int, int] | None:
+    return _expand_slot_box(
+        slot, shape, left=QTY_PAD_LEFT, up=QTY_PAD_UP, right=QTY_PAD_RIGHT, down=QTY_PAD_DOWN
+    )
+
+
+def crate_proof_box(slot: ShopSlot, shape: tuple[int, ...]) -> tuple[int, int, int, int] | None:
+    return _expand_slot_box(
+        slot,
+        shape,
+        left=QTY_PAD_LEFT,
+        up=QTY_PAD_UP,
+        right=PROOF_PAD_RIGHT,
+        down=PROOF_PAD_DOWN,
+    )
+
+
+def crate_proof_crop(source, slot: ShopSlot) -> np.ndarray:
+    image = source if isinstance(source, np.ndarray) else as_bgr(source)
+    box = crate_proof_box(slot, image.shape)
+    if box is None:
+        return _slot_crop(image, slot.x, slot.y, slot.width, slot.height)
+    x, y, w, h = box
+    return _slot_crop(image, x, y, w, h)
+
+
+def _qty_white_mask(bgr: np.ndarray) -> np.ndarray:
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    white = cv2.inRange(hsv, (0, 0, 160), (180, 130, 255))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    return cv2.morphologyEx(white, cv2.MORPH_CLOSE, kernel)
+
+
+def _qty_holes(bin_img: np.ndarray) -> int:
+    pad = cv2.copyMakeBorder(bin_img, 3, 3, 3, 3, cv2.BORDER_CONSTANT, value=0)
+    _contours, hier = cv2.findContours(pad, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    if hier is None:
+        return 0
+    return int(sum(1 for row in hier[0] if row[3] >= 0))
+
+
+def _qty_hole_cy(bin_img: np.ndarray) -> float:
+    pad = cv2.copyMakeBorder(bin_img, 3, 3, 3, 3, cv2.BORDER_CONSTANT, value=0)
+    inv = cv2.bitwise_not(pad)
+    filled = inv.copy()
+    cv2.floodFill(filled, None, (0, 0), 0)
+    ys = np.where(filled > 0)[0]
+    if len(ys) == 0:
+        return 0.5
+    return float(ys.mean() / pad.shape[0])
+
+
+def _classify_qty_digit(bin_img: np.ndarray) -> str | None:
+    h, w = bin_img.shape[:2]
+    ink = (bin_img > 0).astype(np.float32)
+    if ink.mean() < 0.05:
+        return None
+    holes = _qty_holes(bin_img)
+    aspect = h / max(w, 1)
+    top, mid, bot = (
+        float(ink[: h // 3].mean()),
+        float(ink[h // 3 : 2 * h // 3].mean()),
+        float(ink[2 * h // 3 :].mean()),
+    )
+    fill = float(ink.mean())
+    right = float(ink[:, w // 2 :].mean())
+    left = float(ink[:, : w // 2].mean())
+    if holes >= 2:
+        return "8"
+    if holes == 1:
+        if fill >= 0.58:
+            return "8"
+        cy = _qty_hole_cy(bin_img)
+        if cy < 0.40:
+            return "9"
+        if cy > 0.60:
+            return "6"
+        if aspect > 1.35:
+            return "4"
+        return "0"
+    if aspect > 2.05:
+        return "1"
+    if top > bot * 1.08 and top >= mid:
+        return "7"
+    if bot > top and right > left:
+        return "2"
+    if right > left * 1.08:
+        return "3"
+    return "5"
+
+
+def _qty_digits(strip: np.ndarray, x_h: int, x_w: int) -> list[str]:
+    if strip.size == 0:
+        return []
+    mask = _qty_white_mask(strip)
+    _n, _labels, stats, _cents = cv2.connectedComponentsWithStats(mask, 8)
+    min_h = max(10, int(x_h * 0.35))
+    glyphs: list[tuple[int, np.ndarray]] = []
+    for i in range(1, stats.shape[0]):
+        gx, gy, gw, gh, area = (int(v) for v in stats[i])
+        if gh < min_h or area < 40 or gw > int(x_w * 1.6):
+            continue
+        glyphs.append((gx, mask[gy : gy + gh, gx : gx + gw]))
+    glyphs.sort(key=lambda item: item[0])
+    digits: list[str] = []
+    for _gx, crop in glyphs:
+        digit = _classify_qty_digit(crop)
+        if digit is None:
+            return []
+        digits.append(digit)
+    return digits
 
 
 def _mean_saturation(crop: np.ndarray) -> float:

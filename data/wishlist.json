@@ -1,14 +1,4 @@
 {
-  "bolt": {
-    "template": "item_bolt",
-    "news_template": "item_bolt_news",
-    "enabled": true
-  },
-  "plank": {
-    "template": "item_plank",
-    "news_template": "item_plank_news",
-    "enabled": true
-  },
   "ca_chua": {
     "template": "item_ca_chua",
     "news_template": "item_ca_chua_news",
@@ -42,7 +32,7 @@
   "so_do": {
     "template": "item_so_do",
     "news_template": "item_so_do_news",
-    "enabled": true
+    "enabled": false
   },
   "bua_mo_rong_dat": {
     "template": "item_bua_mo_rong_dat",
@@ -67,7 +57,7 @@
   "cua": {
     "template": "item_cua",
     "news_template": "item_cua_news",
-    "enabled": true
+    "enabled": false
   },
   "ao": {
     "template": "item_ao",
@@ -82,7 +72,7 @@
   "van_go": {
     "template": "item_van_go",
     "news_template": "item_van_go_news",
-    "enabled": true
+    "enabled": false
   },
   "pho_mai": {
     "template": "item_pho_mai",
@@ -92,11 +82,51 @@
   "xeng": {
     "template": "item_xeng",
     "news_template": "item_xeng_news",
-    "enabled": true
+    "enabled": false
   },
   "riu": {
     "template": "item_riu",
     "news_template": "item_riu_news",
+    "enabled": false
+  },
+  "nuoc_ca_rot_ep": {
+    "template": "item_nuoc_ca_rot_ep",
+    "news_template": "item_nuoc_ca_rot_ep_news",
+    "enabled": false
+  },
+  "bong_ngo_cay": {
+    "template": "item_bong_ngo_cay",
+    "news_template": "item_bong_ngo_cay_news",
+    "enabled": false
+  },
+  "thanh_bac": {
+    "template": "item_thanh_bac",
+    "news_template": "item_thanh_bac_news",
+    "enabled": false
+  },
+  "bu_long": {
+    "template": "item_bu_long",
+    "news_template": "item_bu_long_news",
     "enabled": true
+  },
+  "go_doi": {
+    "template": "item_go_doi",
+    "news_template": "item_go_doi_news",
+    "enabled": true
+  },
+  "thanh_bach_kim": {
+    "template": "item_thanh_bach_kim",
+    "news_template": "item_thanh_bach_kim_news",
+    "enabled": true
+  },
+  "qua_ot": {
+    "template": "item_qua_ot",
+    "news_template": "item_qua_ot_news",
+    "enabled": false
+  },
+  "vay_tim": {
+    "template": "item_vay_tim",
+    "news_template": "item_vay_tim_news",
+    "enabled": false
   }
 }

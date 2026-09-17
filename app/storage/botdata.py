@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -14,7 +15,7 @@ from app import config as app_config
 
 ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 LIBRARY_ID_RE = re.compile(r"^(shop|news)_[0-9]{1,6}$")
-PROTECTED_PREFIXES = ("hud_", "newspaper_", "shop_", "popup_", "price_")
+PROTECTED_PREFIXES = ("hud_", "newspaper_", "shop_", "popup_", "price_", "qty_")
 MAX_PNG_BYTES = 2_000_000
 MAX_EDGE = 1024
 LIBRARY_MATCH_THRESHOLD = 0.90
@@ -49,10 +50,44 @@ def column_path() -> Path:
 
 
 MAX_PURCHASES = 200
+BUY_PROOF_RE = re.compile(r"^buy_[0-9]{1,6}$")
 
 
 def purchases_path() -> Path:
     return data_dir() / "purchases.json"
+
+
+def buy_proofs_dir() -> Path:
+    path = purchases_path().parent / "buy_proofs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def buy_proof_png(name: str) -> Path:
+    stem = Path(str(name)).stem
+    if not BUY_PROOF_RE.fullmatch(stem):
+        raise ValueError("bad buy proof name")
+    folder = buy_proofs_dir()
+    path = (folder / f"{stem}.png").resolve()
+    if folder.resolve() not in path.parents:
+        raise ValueError("bad buy proof path")
+    return path
+
+
+def next_buy_proof_id() -> str:
+    taken = {path.stem for path in buy_proofs_dir().glob("buy_*.png")}
+    for n in range(1, 10_000):
+        key = f"buy_{n:02d}" if n < 100 else f"buy_{n}"
+        if key not in taken:
+            return key
+    raise ValueError("too many buy proofs")
+
+
+def write_buy_proof(png_bytes: bytes) -> str:
+    png_bytes = _validate_png_bytes(png_bytes)
+    name = next_buy_proof_id()
+    buy_proof_png(name).write_bytes(png_bytes)
+    return name
 
 
 def load_purchases() -> list[dict]:
@@ -69,8 +104,20 @@ def load_purchases() -> list[dict]:
         kind = str(row.get("kind") or "match").strip()
         if kind != "buy":
             kind = "match"
-        if item and at:
-            out.append({"item": item, "at": at, "kind": kind})
+        if not item or not at:
+            continue
+        rec = {"item": item, "at": at, "kind": kind}
+        if kind == "buy":
+            image = str(row.get("image") or "").strip()
+            if BUY_PROOF_RE.fullmatch(image):
+                rec["image"] = image
+            try:
+                qty = int(row.get("qty"))
+            except (TypeError, ValueError):
+                qty = 0
+            if 1 <= qty <= 999:
+                rec["qty"] = qty
+        out.append(rec)
     return out
 
 
@@ -87,6 +134,10 @@ def wishlist_buy_status() -> list[dict]:
         item = row["item"]
         event = {"at": row["at"]}
         if row["kind"] == "buy":
+            if row.get("image"):
+                event["image"] = row["image"]
+            if row.get("qty"):
+                event["qty"] = row["qty"]
             buys.setdefault(item, []).append(event)
         else:
             matches.setdefault(item, []).append(event)
@@ -97,6 +148,7 @@ def wishlist_buy_status() -> list[dict]:
         item_id = entry["id"]
         match_rows = matches.get(item_id, [])
         buy_rows = buys.get(item_id, [])
+        qty_sum = sum(int(ev["qty"]) for ev in buy_rows if ev.get("qty"))
         rows.append(
             {
                 "id": item_id,
@@ -106,6 +158,7 @@ def wishlist_buy_status() -> list[dict]:
                 "has_news_image": entry["has_news_image"],
                 "match_count": len(match_rows),
                 "buy_count": len(buy_rows),
+                "qty_sum": qty_sum,
                 "last_match_at": match_rows[0]["at"] if match_rows else None,
                 "last_buy_at": buy_rows[0]["at"] if buy_rows else None,
                 "matches": match_rows,
@@ -116,7 +169,11 @@ def wishlist_buy_status() -> list[dict]:
 
 
 def record_purchase(
-    item: str, when: datetime | None = None, kind: str = "match"
+    item: str,
+    when: datetime | None = None,
+    kind: str = "match",
+    image: bytes | None = None,
+    qty: int | None = None,
 ) -> dict:
     stamp = when or datetime.now().astimezone()
     event = "buy" if str(kind).strip() == "buy" else "match"
@@ -125,6 +182,15 @@ def record_purchase(
         "at": stamp.isoformat(timespec="seconds"),
         "kind": event,
     }
+    if event == "buy" and image:
+        row["image"] = write_buy_proof(image)
+    if event == "buy" and qty is not None:
+        try:
+            n = int(qty)
+        except (TypeError, ValueError):
+            n = 0
+        if 1 <= n <= 999:
+            row["qty"] = n
     rows = [row, *load_purchases()][:MAX_PURCHASES]
     save_json(purchases_path(), {"purchases": rows})
     return row
@@ -132,6 +198,9 @@ def record_purchase(
 
 def clear_purchases() -> None:
     save_json(purchases_path(), {"purchases": []})
+    folder = purchases_path().parent / "buy_proofs"
+    if folder.is_dir():
+        shutil.rmtree(folder)
 
 
 def load_column() -> tuple[int, int] | None:

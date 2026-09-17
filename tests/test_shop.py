@@ -192,12 +192,33 @@ def test_open_newspaper_taps_stand(no_sleep):
 
 def test_shop_egg_slot_is_buyable():
     slots = NewspaperDetector().find_slots(
-        FIXTURES / "shop_egg.png", {"egg": {"template": "item_egg"}}
+        FIXTURES / "shop_egg.png", {"trung": {"template": "item_trung"}}
     )
     assert slots
-    assert slots[0].item == "egg"
+    assert slots[0].item == "trung"
     assert slots[0].buyable
     assert slots[0].confidence >= 0.72
+
+
+def test_read_crate_qty_egg_is_8():
+    from app.vision.newspaper import crate_proof_crop
+
+    news = NewspaperDetector()
+    egg = _bgr(FIXTURES / "shop_egg.png")
+    slot = news.find_slots(egg, {"trung": {"template": "item_trung"}})[0]
+    assert news.read_crate_qty(egg, slot) == 8
+    crop = crate_proof_crop(egg, slot)
+    assert crop.shape[0] > slot.height
+    assert crop.shape[1] > slot.width
+    hit = news.matcher.match_one(crop, "qty_x", threshold=0.70)
+    assert hit is not None
+
+
+def test_read_crate_qty_popcorn_is_7():
+    news = NewspaperDetector()
+    shop = _bgr(PLAYER_SHOP)
+    slot = news.find_slots(shop, {"pop": {"template": "item_bong_ngo_cay"}})[0]
+    assert news.read_crate_qty(shop, slot) == 7
 
 
 def test_shop_slot_matches_color_template(tmp_path):
@@ -414,6 +435,11 @@ def test_buy_coin_slot_and_verify(tmp_path, no_sleep, monkeypatch):
     assert [row["kind"] for row in rows] == ["buy", "match"]
     assert rows[0]["item"] == "wheat"
     assert "T" in rows[0]["at"]
+    assert rows[0]["image"] == "buy_01"
+    from app.storage.botdata import buy_proof_png
+
+    assert buy_proof_png("buy_01").is_file()
+    assert "qty" not in rows[0]
 
 
 def test_stall_match_records_wishlist_when_buy_verify_fails(tmp_path, no_sleep, monkeypatch):
@@ -440,6 +466,9 @@ def test_stall_match_records_wishlist_when_buy_verify_fails(tmp_path, no_sleep, 
     rows = list_purchases()
     assert [row["kind"] for row in rows] == ["match"]
     assert rows[0]["item"] == "wheat"
+    assert "image" not in rows[0]
+    assert "qty" not in rows[0]
+    assert list((tmp_path / "buy_proofs").glob("*.png")) == []
 
 
 def test_buy_wishlist_succeeds_when_icon_turns_gray(tmp_path, no_sleep, monkeypatch):

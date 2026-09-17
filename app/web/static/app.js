@@ -340,13 +340,15 @@ function renderWishlistBuys(rows) {
         : `<span class="ph">?</span>`;
       const matches = Number(row.match_count) || 0;
       const buys = Number(row.buy_count) || 0;
+      const qtySum = Number(row.qty_sum) || 0;
       const matchCell =
         matches > 0
           ? `<button type="button" class="buy-count" data-hist="match" data-id="${escapeHtml(row.id)}">${matches}</button>`
           : `<span class="buy-count zero">0</span>`;
+      const qtyHint = qtySum > 0 ? `<span class="buy-qty">×${qtySum}</span>` : "";
       const buyCell =
         buys > 0
-          ? `<button type="button" class="buy-count" data-hist="buy" data-id="${escapeHtml(row.id)}">${buys}</button>`
+          ? `<button type="button" class="buy-count" data-hist="buy" data-id="${escapeHtml(row.id)}">${buys}</button>${qtyHint}`
           : `<span class="buy-count zero">0</span>`;
       return `<tr>
         <td><div class="item">${thumb}<b>${escapeHtml(row.id)}</b></div></td>
@@ -362,9 +364,19 @@ function openBuyHistory(itemId, kind) {
   const events = row ? (kind === "buy" ? row.buys : row.matches) || [] : [];
   if (!row || !events.length) return;
   $("buy-history-title").textContent = kind === "buy" ? "Lần mua thành công" : "Lần khớp wishlist";
-  $("buy-history-item").textContent = row.id;
+  const qtySum = kind === "buy" ? Number(row.qty_sum) || 0 : 0;
+  $("buy-history-item").textContent = qtySum > 0 ? `${row.id} · Tổng ${qtySum}` : row.id;
   $("buy-history-list").innerHTML = events
-    .map((ev) => `<li>${escapeHtml(formatBuyTime(ev.at))}</li>`)
+    .map((ev) => {
+      const time = escapeHtml(formatBuyTime(ev.at));
+      const qty = Number(ev.qty) > 0 ? `×${Number(ev.qty)}` : "";
+      const label = qty ? `${qty} · ${time}` : time;
+      if (kind === "buy" && ev.image) {
+        const src = `/api/buy-proofs/${encodeURIComponent(ev.image)}.png`;
+        return `<li class="buy-proof"><img src="${escapeHtml(src)}" alt="" /><span>${escapeHtml(label)}</span></li>`;
+      }
+      return `<li>${escapeHtml(label)}</li>`;
+    })
     .join("");
   $("buy-history-modal").showModal();
 }

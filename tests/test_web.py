@@ -91,6 +91,26 @@ def test_record_purchase_newest_first(data_home: Path):
     assert cleared["egg"]["last_buy_at"] is None
 
 
+def test_record_purchase_buy_saves_proof_png(data_home: Path):
+    png = _png_bytes()
+    row = botdata.record_purchase("wheat", kind="buy", image=png, qty=8)
+    assert row["kind"] == "buy"
+    assert row["image"] == "buy_01"
+    assert row["qty"] == 8
+    path = data_home / "buy_proofs" / "buy_01.png"
+    assert path.is_file()
+    status = {entry["id"]: entry for entry in botdata.wishlist_buy_status()}
+    assert status["wheat"]["buys"][0]["image"] == "buy_01"
+    assert status["wheat"]["buys"][0]["qty"] == 8
+    assert status["wheat"]["qty_sum"] == 8
+    botdata.record_purchase("wheat", kind="match")
+    fail_buy = botdata.record_purchase("wheat", kind="buy")
+    assert "image" not in fail_buy
+    botdata.clear_purchases()
+    assert not path.is_file()
+    assert not (data_home / "buy_proofs").exists()
+
+
 def test_legacy_purchase_without_kind_counts_as_match(data_home: Path):
     botdata.upsert_item("wheat", enabled=True)
     botdata.save_json(
@@ -104,7 +124,8 @@ def test_legacy_purchase_without_kind_counts_as_match(data_home: Path):
 
 
 def test_delete_purchases_api(httpd: str, data_home: Path):
-    botdata.record_purchase("wheat")
+    botdata.record_purchase("wheat", kind="buy", image=_png_bytes())
+    assert (data_home / "buy_proofs" / "buy_01.png").is_file()
     code, body = _request(f"{httpd}/api/purchases", "DELETE")
     assert code == 200
     assert body["purchases"] == []
@@ -112,6 +133,16 @@ def test_delete_purchases_api(httpd: str, data_home: Path):
     assert wheat["match_count"] == 0
     assert wheat["buy_count"] == 0
     assert wheat["last_buy_at"] is None
+    assert not (data_home / "buy_proofs" / "buy_01.png").is_file()
+
+
+def test_get_buy_proof_png(httpd: str, data_home: Path):
+    botdata.record_purchase("wheat", kind="buy", image=_png_bytes())
+    code, png = _request(f"{httpd}/api/buy-proofs/buy_01.png")
+    assert code == 200
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    code, err = _request(f"{httpd}/api/buy-proofs/not_valid.png")
+    assert code == 400
 
 
 def test_update_item_renames_id_and_png(data_home: Path):
@@ -177,8 +208,18 @@ def test_cli_web_starts_server(monkeypatch, data_home: Path):
         called["port"] = port
 
     monkeypatch.setattr("app.web.server.serve", fake_serve)
+    assert main(["web", "--port", "48722"]) == 0
+    assert called == {"host": "0.0.0.0", "port": 48722}
     assert main(["web", "--host", "127.0.0.1", "--port", "48722"]) == 0
     assert called == {"host": "127.0.0.1", "port": 48722}
+
+
+def test_listen_urls_all_interfaces_includes_localhost():
+    from app.web.server import listen_urls
+
+    urls = listen_urls("0.0.0.0", 48721)
+    assert urls[0] == "http://127.0.0.1:48721"
+    assert listen_urls("127.0.0.1", 48721) == ["http://127.0.0.1:48721"]
 
 
 @pytest.fixture
@@ -223,6 +264,7 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     assert state["wishlist_buys"][0]["id"] == "wheat"
     assert state["wishlist_buys"][0]["match_count"] == 0
     assert state["wishlist_buys"][0]["buy_count"] == 0
+    assert state["wishlist_buys"][0]["qty_sum"] == 0
     assert state["wishlist_buys"][0]["last_buy_at"] is None
 
     code, page = _request(f"{httpd}/")
@@ -254,6 +296,17 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     assert b"buy-history-modal" in page
     assert b"action_wait_s" in page
     assert b"buy_wait_s" in page
+    assert b"viewport-fit=cover" in page
+    code, css = _request(f"{httpd}/static/style.css")
+    assert code == 200
+    assert b"@media (max-width: 900px)" in css
+    assert b"@media (max-width: 600px)" in css
+    code, js = _request(f"{httpd}/static/app.js")
+    assert code == 200
+    assert b"/api/buy-proofs/" in js
+    assert b"buy-proof" in js
+    assert b"qty_sum" in js
+    assert "Tổng".encode("utf-8") in js
 
     code, saved = _request(
         f"{httpd}/api/items",

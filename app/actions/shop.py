@@ -20,7 +20,13 @@ from app.storage.botdata import (
 )
 from app.storage.logger import get_logger
 from app.vision.detector import DetectedObject
-from app.vision.newspaper import NewspaperDetector, ShopSlot, bgr_png_bytes, crate_views_differ
+from app.vision.newspaper import (
+    NewspaperDetector,
+    ShopSlot,
+    bgr_png_bytes,
+    crate_proof_crop,
+    crate_views_differ,
+)
 from app.vision.overlay import save_overlay
 from app.vision.regions import (
     NEWS_OPEN_LEFT_PAGE,
@@ -394,6 +400,8 @@ class NewspaperActions:
                         matched.add(slot.item)
                         record_purchase(slot.item, kind="match")
                         log.info(f"WISH match {slot.item} in stall")
+                    proof = _slot_proof_png(png, slot)
+                    qty = self.news.read_crate_qty(png, slot)
                     result = self._buy_one(slot)
                     if not result.success:
                         skipped.append(slot)
@@ -402,7 +410,7 @@ class NewspaperActions:
                         log.info(f"BUY skip {slot.item} {result.error or 'fail'}")
                         png = self.device.screenshot()
                         continue
-                    record_purchase(slot.item, kind="buy")
+                    record_purchase(slot.item, kind="buy", image=proof, qty=qty)
                     last = result
                     bought += 1
                     if max_buys is not None and bought >= max_buys:
@@ -830,3 +838,10 @@ def _overlap(a: ShopSlot, b: ShopSlot) -> float:
 
 def _slot_skipped(slot: ShopSlot, skipped: list[ShopSlot]) -> bool:
     return any(_overlap(slot, seen) > 0.4 for seen in skipped)
+
+
+def _slot_proof_png(png, slot: ShopSlot) -> bytes | None:
+    crop = crate_proof_crop(png, slot)
+    if crop.size == 0:
+        return None
+    return bgr_png_bytes(crop)

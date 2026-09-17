@@ -70,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("shop-capture", help="Crop priced crate icons into the wishlist")
 
     web = sub.add_parser("web", help="Web UI for config, wishlist items, and crops")
-    web.add_argument("--host", default="127.0.0.1")
+    web.add_argument("--host", default="0.0.0.0")
     web.add_argument("--port", type=int, default=48721)
 
     return parser

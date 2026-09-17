@@ -17,11 +17,15 @@ html,
 body {
   margin: 0;
   min-height: 100%;
+  overflow-x: hidden;
 }
 body {
   font-family: 'Segoe UI', 'Be Vietnam Pro', 'Helvetica Neue', sans-serif;
   color: var(--ink);
   background: radial-gradient(1200px 500px at 10% -10%, #f7e7b8 0%, transparent 50%), linear-gradient(180deg, #d7e4c5 0%, #efe4cc 42%, #e8d5b3 100%);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .grain {
@@ -40,6 +44,7 @@ body {
   flex-wrap: wrap;
   gap: 6px;
   padding: 12px 32px 0;
+  padding-top: max(12px, env(safe-area-inset-top));
   max-width: 1200px;
   margin: 0 auto;
 }
@@ -53,6 +58,8 @@ body {
   font-size: 13px;
   font-weight: 650;
   box-shadow: var(--shadow);
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
 }
 .nav a.active {
   background: var(--moss);
@@ -122,6 +129,9 @@ h1 {
   padding: 16px 32px 40px;
   max-width: 1200px;
   margin: 0 auto;
+}
+.shell > * {
+  min-width: 0;
 }
 body.has-live .shell {
   grid-template-columns: minmax(260px, 1.1fr) minmax(280px, 1fr);
@@ -234,6 +244,7 @@ code {
 }
 #library-picker {
   width: min(640px, calc(100vw - 32px));
+  max-height: min(92dvh, calc(100vh - 24px));
 }
 #library-picker-grid .tile {
   cursor: pointer;
@@ -298,6 +309,12 @@ select {
   border-radius: 12px;
   padding: 9px 14px;
   cursor: pointer;
+  touch-action: manipulation;
+  display: inline-block;
+  text-align: center;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .btn.primary {
   background: var(--moss);
@@ -427,6 +444,7 @@ select {
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
+  min-width: 0;
 }
 .row.wrap {
   margin: 8px 0;
@@ -556,12 +574,33 @@ select {
   color: var(--muted);
   cursor: default;
 }
+.buy-log .buy-qty {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 .buy-history-list {
   margin: 8px 0 0;
   padding-left: 18px;
   max-height: 240px;
   overflow: auto;
   font-variant-numeric: tabular-nums;
+}
+.buy-history-list li.buy-proof {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  list-style: decimal;
+  margin: 6px 0;
+}
+.buy-history-list li.buy-proof img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #1c2818;
+  flex-shrink: 0;
 }
 .viewport {
   position: relative;
@@ -633,18 +672,198 @@ select {
   .add-form.item-add,
   .config-form,
   .control-grid,
-  .preview-pair {
+  .preview-pair,
+  .tile .pair {
     grid-template-columns: 1fr;
+  }
+  body.has-live .shell > .page.active {
+    order: -1;
+  }
+  .nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    background: rgba(215, 228, 197, 0.94);
+    backdrop-filter: blur(10px);
+    padding-bottom: 8px;
+  }
+  .nav::-webkit-scrollbar {
+    display: none;
   }
   .nav,
   .top,
   .shell,
   .toast {
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+  }
+  .nav a {
+    flex: 0 0 auto;
+    padding: 10px 14px;
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .top {
+    align-items: flex-start;
+    padding-top: 12px;
+  }
+  .top-status {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    width: 100%;
+    min-width: 0;
+  }
+  .pill {
+    min-width: 0;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+  h1 {
+    font-size: clamp(22px, 7vw, 32px);
+  }
+  .lede {
+    font-size: 14px;
+  }
+  .card {
+    padding: 14px 14px 18px;
+    border-radius: 18px;
   }
   .news-steps li {
     grid-template-columns: 1fr;
+  }
+  .news-steps .btn {
+    display: block;
+    width: 100%;
+  }
+  .behaviors {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+    align-items: stretch;
+  }
+  .behaviors label {
+    min-width: 0;
+  }
+  .behaviors > label:not(.check) {
+    grid-column: 1 / -1;
+  }
+  .behaviors .check {
+    min-height: 40px;
+  }
+  .row.wrap > .btn,
+  .row.wrap > .file-btn {
+    flex: 1 1 calc(50% - 8px);
+    min-width: 0;
+    max-width: 100%;
+    min-height: 44px;
+    text-align: center;
+    white-space: normal;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+  .row.wrap.pan {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    align-items: stretch;
+  }
+  .row.wrap.pan > .muted {
+    grid-column: 1 / -1;
+  }
+  .row.wrap.pan > .btn {
+    flex: none;
+    width: auto;
+    min-width: 0;
+  }
+  .row.wrap.pan > .btn.primary,
+  .row.wrap.pan > [data-pan="reset"] {
+    grid-column: span 2;
+  }
+  #btn-start,
+  #btn-stop {
+    flex-basis: calc(50% - 8px);
+  }
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+    min-height: 44px;
+  }
+  .file-btn {
+    min-height: 44px;
+    text-align: center;
+  }
+  .viewport {
+    min-height: 0;
+    max-height: 42vh;
+  }
+  .live-panel .log,
+  .log {
+    max-height: 140px;
+    overflow-x: auto;
+  }
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  }
+  .grid.compact {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  }
+  .macro-steps {
+    padding-left: 18px;
+  }
+  .macro-steps li {
+    flex-wrap: wrap;
+  }
+  .macro-steps input[type='number'] {
+    width: 4.5rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .behaviors > label:not(.check) {
+    grid-column: 1 / -1;
+  }
+  .top-status {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    width: 100%;
+    min-width: 0;
+  }
+  .pill {
+    min-width: 0;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .lede {
+    overflow-wrap: anywhere;
+  }
+  .page[data-page="develop"] .row.wrap:not(.pan) > .btn {
+    flex-basis: 100%;
+  }
+  .buy-log th:nth-child(1),
+  .buy-log td:nth-child(1) {
+    width: 46%;
+  }
+  .buy-log img,
+  .buy-log .ph {
+    width: 24px;
+    height: 24px;
+  }
+  .modal-actions {
+    flex-wrap: wrap;
+  }
+  .modal-actions .btn {
+    flex: 1 1 calc(50% - 8px);
+    min-height: 44px;
   }
 }
 
@@ -655,7 +874,9 @@ dialog.modal {
   background: var(--paper);
   color: var(--ink);
   box-shadow: var(--shadow);
-  /* width: min(420px, calc(100vw - 32px)); */
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(92dvh, calc(100vh - 24px));
+  overflow: auto;
 }
 dialog.modal::backdrop {
   background: rgba(36, 25, 15, 0.45);

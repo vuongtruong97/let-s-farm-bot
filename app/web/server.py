@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -26,7 +27,7 @@ SPA_PAGES = {
     "/dev",
     "/develop",
 }
-DEFAULT_HOST = "127.0.0.1"
+DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 48721
 MAX_BODY = 2_500_000
 
@@ -90,6 +91,18 @@ class BotWebHandler(BaseHTTPRequestHandler):
                 file_path = botdata.library_png(name)
             except ValueError:
                 self._send_json(400, {"error": "bad library id"})
+                return
+            if not file_path.is_file():
+                self._send_json(404, {"error": "not found"})
+                return
+            self._send_file(file_path, "image/png")
+            return
+        if path.startswith("/api/buy-proofs/") and path.endswith(".png"):
+            name = path.rsplit("/", 1)[-1]
+            try:
+                file_path = botdata.buy_proof_png(name)
+            except ValueError:
+                self._send_json(400, {"error": "bad buy proof name"})
                 return
             if not file_path.is_file():
                 self._send_json(404, {"error": "not found"})
@@ -421,10 +434,39 @@ class BotHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = False
 
 
+def _lan_ipv4() -> list[str]:
+    ips: list[str] = []
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.connect(("8.8.8.8", 80))
+        ip = probe.getsockname()[0]
+        probe.close()
+        if ip and not ip.startswith("127."):
+            ips.append(ip)
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip and not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except OSError:
+        pass
+    return ips
+
+
+def listen_urls(host: str, port: int) -> list[str]:
+    if host in {"0.0.0.0", "::"}:
+        return [f"http://127.0.0.1:{port}", *[f"http://{ip}:{port}" for ip in _lan_ipv4()]]
+    return [f"http://{host}:{port}"]
+
+
 def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
     httpd = BotHTTPServer((host, port), BotWebHandler)
-    print(f"Web UI  http://{host}:{port}", flush=True)
+    print("Web UI", flush=True)
+    for url in listen_urls(host, port):
+        print(f"  {url}", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
