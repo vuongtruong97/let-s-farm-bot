@@ -18,6 +18,7 @@ POPUP = FIXTURES / "popup.png"
 UNKNOWN = FIXTURES / "unknown.png"
 NEWSPAPER = FIXTURES / "newspaper.png"
 PLAYER_SHOP = FIXTURES / "player_shop.png"
+SILO = FIXTURES / "silo.png"
 
 
 @pytest.fixture(scope="module")
@@ -81,6 +82,35 @@ def test_detect_ignores_strict_matcher_threshold():
     assert popup.screen is GameScreen.POPUP
     farm = detector.detect(FARM)
     assert farm.screen is GameScreen.FARM
+
+
+@pytest.mark.parametrize(
+    "fixture, expected",
+    [
+        (PLAYER_SHOP, GameScreen.PLAYER_SHOP),
+        (NEWSPAPER, GameScreen.NEWSPAPER),
+        (POPUP, GameScreen.POPUP),
+        (FARM, GameScreen.FARM),
+    ],
+)
+def test_fast_detect_agrees_with_full_pass(detector, fixture, expected):
+    """The poll loop runs on the fast path; it must not disagree with the
+    full pass, or an open stall reads as closed and the shop is skipped."""
+    assert detector.detect(fixture, full=True).screen is expected
+    assert detector.detect(fixture).screen is expected
+
+
+def test_off_size_dialog_x_is_still_a_popup(detector: ScreenDetector):
+    """The silo X is drawn at 0.92 of the captured one. Matching popup_close at
+    a single scale reads this dialog as FARM, which is how a diamond prompt
+    would get treated as open ground."""
+    assert detector.detect(SILO).screen is GameScreen.POPUP
+    assert detector.detect(SILO, full=True).screen is GameScreen.POPUP
+
+
+def test_fast_detect_keeps_popup_close_targets(detector: ScreenDetector):
+    result = detector.detect(POPUP)
+    assert [obj for obj in result.objects if obj.type == "popup" and obj.state == "close"]
 
 
 def test_single_hud_button_is_unknown(detector: ScreenDetector):

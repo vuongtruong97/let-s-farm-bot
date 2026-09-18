@@ -114,7 +114,15 @@ class BotRuntime:
                 "has_frame": self.last_frame is not None,
                 "logs": list(self.logs),
                 "recording": self._recording_snap(),
+                "timing": self._timing_snap(),
             }
+
+    def _timing_snap(self) -> dict | None:
+        """Per-step wall clock of the newspaper shop loop, for the live table."""
+        timing = getattr(self._news, "timing", None)
+        if timing is None:
+            return None
+        return timing.snapshot()
 
     def frame_png(self) -> bytes | None:
         with self.lock:
@@ -361,7 +369,10 @@ class BotRuntime:
             matcher = getattr(self._news, "matcher", None)
             if matcher is not None:
                 matcher.threshold = cfg.template_threshold
-                if hasattr(matcher, "reload"):
+                # Re-decoding every template PNG on each job is pure overhead.
+                if hasattr(matcher, "reload_if_changed"):
+                    matcher.reload_if_changed()
+                elif hasattr(matcher, "reload"):
                     matcher.reload()
             news_det = getattr(self._news, "news", None)
             if news_det is not None:
@@ -371,6 +382,12 @@ class BotRuntime:
                 self._news.wait_s = cfg.action_wait_s
             if hasattr(self._news, "buy_wait_s"):
                 self._news.buy_wait_s = cfg.buy_wait_s
+            if hasattr(self._news, "visit_wait_s"):
+                self._news.visit_wait_s = cfg.visit_wait_s
+            if hasattr(self._news, "poll_interval_s"):
+                self._news.poll_interval_s = cfg.poll_interval_s
+            if hasattr(self._news, "stall_swipe_ms"):
+                self._news.stall_swipe_ms = cfg.stall_swipe_ms
             if hasattr(self._news, "wishlist"):
                 from app.storage.botdata import active_wishlist
 
@@ -416,7 +433,7 @@ class BotRuntime:
 
     def _detect(self) -> None:
         png = self.device.screenshot()
-        result = ScreenDetector().detect(png)
+        result = ScreenDetector().detect(png, full=True)
         with self.lock:
             self.screen = result.screen.value
         self._set_result(True, "DETECT", result.screen.value)

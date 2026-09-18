@@ -25,6 +25,10 @@ log = get_logger("VISION")
 COIN_THRESHOLD = 0.62
 ITEM_THRESHOLD = 0.72
 # Shop crate (colour) vs Daily Dirt print (smaller, grey-brown).
+# A crate in the stall draws at exactly the template size: both come from the
+# same 1920x1080 frame. A capture crop is hand-drawn on the web page, so its
+# size is whatever the user framed.
+SHOP_SLOT_SCALES = (1.0,)
 SHOP_ITEM_SCALES = (1.0, 0.82, 0.9, 1.1, 1.25, 1.45)
 NEWS_ITEM_SCALES = (1.0, 0.82, 0.9, 1.1, 1.22)
 ITEM_SCALES = SHOP_ITEM_SCALES
@@ -33,6 +37,18 @@ LIME_LO = (40, 150, 140)
 LIME_HI = (70, 255, 255)
 MIN_LIME_PX = 80
 SOLD_SAT_MAX = 50
+# Visited Daily Dirt cards go grey (mean V ~160); a fresh card stays white (~215).
+AD_DIM_V = 185.0
+# Pale green-and-white checkered cloth the crates stand on.
+CLOTH_LO = (40, 0, 170)
+CLOTH_HI = (100, 110, 255)
+# The stall's own post stands just inside each end of the crate box, so the
+# cloth is read past it.
+STALL_EDGE_PAD = 0.05
+STALL_EDGE_STRIP = 0.05
+# Measured on live stalls: cloth in view reads 0.44-0.60 of the strip, a crate
+# clipped against the frame reads 0.03-0.10.
+MIN_CLOTH_SHARE = 0.25
 PRICE_NEAR_PAD = (12, 8, 56, 56)
 QTY_PAD_LEFT = 0.85
 QTY_PAD_UP = 1.05
@@ -97,18 +113,10 @@ class NewspaperDetector:
 
     def find_stand(self, source) -> DetectedObject | None:
         image = source if isinstance(source, np.ndarray) else as_bgr(source)
-        best: TemplateMatch | None = None
-        for name in self.matcher.names:
-            if not name.startswith("newspaper_stand"):
-                continue
-            hit = self.matcher.match_one(image, name)
-            if hit is None:
-                continue
-            if best is None or hit.confidence > best.confidence:
-                best = hit
-        if best is None:
+        hit = self.matcher.match_one(image, "newspaper_stand", scales=(1.0,))
+        if hit is None:
             return None
-        obj = match_to_object(best)
+        obj = match_to_object(hit)
         return DetectedObject(
             type="newspaper",
             x=obj.x,
@@ -132,6 +140,8 @@ class NewspaperDetector:
                 continue
             coin = self._slot_coin(roi)
             if coin is False:
+                continue
+            if ad_cell_is_dim(roi):
                 continue
             ads.append(
                 DetectedObject(
@@ -254,7 +264,7 @@ class NewspaperDetector:
             shop_name,
             threshold=self.buy_threshold,
             min_dist=48,
-            scales=SHOP_ITEM_SCALES,
+            scales=SHOP_SLOT_SCALES,
             channels="bgr",
         )
 
@@ -544,6 +554,31 @@ def _shop_search(image: np.ndarray) -> tuple[np.ndarray, int, int]:
     return image[y : y + bh, x : x + bw], x, y
 
 
+def stall_edge_cloth(source, side: str) -> float:
+    """Share of bare tablecloth at one end of the crate table.
+
+    A stall wider than the window always keeps a crate clipped against the
+    frame, and that crate covers the cloth. Bare cloth therefore means no
+    column is hidden that way: panning there would only push against the stop.
+    Returns 0.0 for a crop with no table in it, which reads as "go and look".
+    """
+    image = source if isinstance(source, np.ndarray) else as_bgr(source)
+    h, w = image.shape[:2]
+    box = shop_crates_px(w, h)
+    if box is None:
+        return 0.0
+    x, y, bw, bh = box
+    pad = int(round(bw * STALL_EDGE_PAD))
+    strip = max(1, int(round(bw * STALL_EDGE_STRIP)))
+    x1 = x + pad if side == "left" else x + bw - pad - strip
+    roi = image[y : y + bh, max(x, x1) : min(x + bw, x1 + strip)]
+    if roi.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, np.array(CLOTH_LO), np.array(CLOTH_HI))
+    return float(np.count_nonzero(mask)) / mask.size
+
+
 def crate_table_bgr(source) -> np.ndarray:
     image = source if isinstance(source, np.ndarray) else as_bgr(source)
     search, _ox, _oy = _shop_search(image)
@@ -551,6 +586,14 @@ def crate_table_bgr(source) -> np.ndarray:
 
 
 NEWS_FP_SIZE = (96, 54)
+
+
+def ad_cell_is_dim(roi: np.ndarray) -> bool:
+    """True when a listing card has the grey visited tint, not a fresh white one."""
+    if roi.size == 0:
+        return False
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    return float(np.mean(hsv[:, :, 2])) < AD_DIM_V
 
 
 def newspaper_listing_bgr(source) -> np.ndarray:
@@ -595,19 +638,26 @@ def _is_news_fp(value) -> bool:
     )
 
 
-def crate_views_differ(a, b, min_changed: float = 0.03) -> bool:
-    """True when the visible stall table moved (not yet at that edge)."""
+def crate_view_shift(a, b) -> float:
+    """How far the stall table scrolled between two frames, in pixels.
+
+    Counting changed pixels cannot tell a scroll from a bounce or an idle
+    animation, which reads as an edge that is not there. Phase correlation
+    measures the displacement itself and costs about 15ms.
+    """
     left = crate_table_bgr(a)
     right = crate_table_bgr(b)
     if left.size == 0 or right.size == 0:
-        return True
+        return 0.0
     if left.shape != right.shape:
         right = cv2.resize(
             right, (left.shape[1], left.shape[0]), interpolation=cv2.INTER_AREA
         )
-    delta = np.max(np.abs(left.astype(np.int16) - right.astype(np.int16)), axis=2)
-    changed = float(np.mean(delta > 18))
-    return changed >= min_changed
+    first = cv2.cvtColor(left, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    second = cv2.cvtColor(right, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    window = cv2.createHanningWindow((first.shape[1], first.shape[0]), cv2.CV_32F)
+    (dx, _dy), _response = cv2.phaseCorrelate(first, second, window)
+    return float(dx)
 
 
 def crop_ad_item_icon(ad_bgr: np.ndarray) -> np.ndarray:

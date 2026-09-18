@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from app.storage.logger import get_logger
 log = get_logger("DEVICE")
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+PNG_IEND = b"IEND\xaeB`\x82"
 
 
 class DeviceController:
@@ -25,6 +27,9 @@ class DeviceController:
         self.adb = adb or AdbClient(self.config.adb_bin)
         self.serial = ""
         self.input: InputController | None = None
+        # Optional app.actions.timing.LoopTiming; duck-typed to keep this layer
+        # free of action imports.
+        self.timing = None
 
     def connect(self, host: str | None = None, port: int | None = None) -> str:
         host = host or self.config.adb_host
@@ -61,8 +66,13 @@ class DeviceController:
             ["-s", self.serial or self.connect(), "exec-out", "screencap", "-p"],
             timeout=15,
         )
+        started = time.perf_counter()
         png = _valid_png(raw)
-        log.info(f"screenshot {len(png)} bytes")
+        decode_s = time.perf_counter() - started
+        if self.timing is not None:
+            self.timing.add_decode(decode_s)
+        # Debug level: one line per shot floods the web log panel.
+        log.debug(f"screenshot {len(png)} bytes decode={decode_s * 1000:.0f}ms")
         return png
 
     def save_screenshot(self, path: Path | None = None) -> Path:
@@ -116,6 +126,10 @@ def _stamp() -> str:
 def _valid_png(raw: bytes) -> bytes:
     if not raw:
         raise DeviceError("ADB trả về ảnh trống")
+    # Magic + IEND is enough to trust screencap output. Decoding every frame
+    # here only to throw the pixels away doubles the cost of a screenshot.
+    if raw.startswith(PNG_MAGIC) and raw.endswith(PNG_IEND):
+        return raw
     for candidate in (raw, raw.replace(b"\r\n", b"\n") if b"\r\n" in raw else b""):
         if not candidate:
             continue

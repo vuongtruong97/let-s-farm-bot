@@ -27,12 +27,12 @@
   "bo_sua": {
     "template": "item_bo_sua",
     "news_template": "item_bo_sua_news",
-    "enabled": false
+    "enabled": true
   },
   "so_do": {
     "template": "item_so_do",
     "news_template": "item_so_do_news",
-    "enabled": false
+    "enabled": true
   },
   "bua_mo_rong_dat": {
     "template": "item_bua_mo_rong_dat",
@@ -57,7 +57,7 @@
   "cua": {
     "template": "item_cua",
     "news_template": "item_cua_news",
-    "enabled": false
+    "enabled": true
   },
   "ao": {
     "template": "item_ao",
@@ -72,22 +72,22 @@
   "van_go": {
     "template": "item_van_go",
     "news_template": "item_van_go_news",
-    "enabled": false
+    "enabled": true
   },
   "pho_mai": {
     "template": "item_pho_mai",
     "news_template": "item_pho_mai_news",
-    "enabled": false
+    "enabled": true
   },
   "xeng": {
     "template": "item_xeng",
     "news_template": "item_xeng_news",
-    "enabled": false
+    "enabled": true
   },
   "riu": {
     "template": "item_riu",
     "news_template": "item_riu_news",
-    "enabled": false
+    "enabled": true
   },
   "nuoc_ca_rot_ep": {
     "template": "item_nuoc_ca_rot_ep",
@@ -127,6 +127,16 @@
   "vay_tim": {
     "template": "item_vay_tim",
     "news_template": "item_vay_tim_news",
+    "enabled": false
+  },
+  "duong_trang": {
+    "template": "item_duong_trang",
+    "news_template": "item_duong_trang_news",
+    "enabled": false
+  },
+  "bat_kem": {
+    "template": "item_bat_kem",
+    "news_template": "item_bat_kem_news",
     "enabled": false
   }
 }

@@ -296,6 +296,12 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     assert b"buy-history-modal" in page
     assert b"action_wait_s" in page
     assert b"buy_wait_s" in page
+    assert b"visit_wait_s" in page
+    assert b"poll_interval_s" in page
+    assert b"stall_swipe_ms" in page
+    assert b"timing-log" in page
+    assert b"timing-safety" in page
+    assert "Thời gian vòng shop".encode("utf-8") in page
     assert b"viewport-fit=cover" in page
     code, css = _request(f"{httpd}/static/style.css")
     assert code == 200
@@ -307,6 +313,9 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     assert b"buy-proof" in js
     assert b"qty_sum" in js
     assert "Tổng".encode("utf-8") in js
+    assert b"renderTiming" in js
+    assert b"deadline_hits" in js
+    assert b"timing-split" in css
 
     code, saved = _request(
         f"{httpd}/api/items",
@@ -351,6 +360,9 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
             "loop_rest_min": 5,
             "action_wait_s": 1.2,
             "buy_wait_s": 2.5,
+            "visit_wait_s": 1.9,
+            "poll_interval_s": 0.25,
+            "stall_swipe_ms": 240,
         },
     )
     assert code == 200
@@ -361,6 +373,9 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     assert cfg["config"]["loop_rest_min"] == 5.0
     assert cfg["config"]["action_wait_s"] == 1.2
     assert cfg["config"]["buy_wait_s"] == 2.5
+    assert cfg["config"]["visit_wait_s"] == 1.9
+    assert cfg["config"]["poll_interval_s"] == 0.25
+    assert cfg["config"]["stall_swipe_ms"] == 240
 
     code, err = _request(
         f"{httpd}/api/items",
@@ -620,6 +635,35 @@ def test_web_run_screenshot_and_unknown(httpd: str, data_home: Path, monkeypatch
         {"action": "loop", "harvest": False, "plant": False, "newspaper": False},
     )
     assert code == 400
+
+
+def test_snapshot_exposes_loop_timing():
+    from app.actions.timing import LoopTiming
+
+    rt = _runtime()
+    # No shop actor built yet, and stubs without a collector stay silent.
+    assert rt.snapshot()["timing"] is None
+
+    timing = LoopTiming()
+    timing.set_waits(buy_wait_s=1.2, visit_wait_s=2.5)
+    with timing.step("shop"):
+        with timing.step("visit_shop", deadline_s=2.5):
+            timing.mark("visit_fail")
+            timing.deadline_hit("visit_shop")
+
+    class _Actor:
+        pass
+
+    actor = _Actor()
+    actor.timing = timing
+    rt._news = actor
+    snap = rt.snapshot()["timing"]
+    assert snap["shop_n"] == 1
+    assert snap["steps"]["visit_shop"]["n"] == 1
+    assert snap["steps"]["visit_shop"]["deadline_s"] == 2.5
+    assert snap["steps"]["visit_shop"]["deadline_hits"] == 1
+    assert snap["safety"]["visit_fail"] == 1
+    assert snap["waits"]["buy_wait_s"] == 1.2
 
 
 def test_web_run_newspaper_step(httpd: str, data_home: Path, monkeypatch: pytest.MonkeyPatch):

@@ -10,6 +10,7 @@ from PIL import Image
 from app.config import AppConfig, load_config, save_config
 from app.controller.adb import ports_from_bluestacks_conf
 from app.controller.device import DeviceController, _valid_png
+from app.controller.adb import DeviceError
 from app.controller.input import InputController
 from app.main import main
 
@@ -45,20 +46,47 @@ def test_config_roundtrip(tmp_path: Path):
     assert loaded.loop_rest_min == 5.0
     assert loaded.action_wait_s == 0.9
     assert loaded.buy_wait_s == 2.0
+    assert loaded.visit_wait_s == 2.5
+    assert loaded.poll_interval_s == 0.0
+    assert loaded.stall_swipe_ms == 280
 
     save_config(
-        AppConfig(adb_port=5625, debug=True, action_wait_s=1.5, buy_wait_s=3.0),
+        AppConfig(
+            adb_port=5625,
+            debug=True,
+            action_wait_s=1.5,
+            buy_wait_s=3.0,
+            visit_wait_s=1.8,
+            poll_interval_s=0.3,
+            stall_swipe_ms=200,
+        ),
         path,
     )
     loaded = load_config(path)
     assert loaded.action_wait_s == 1.5
     assert loaded.buy_wait_s == 3.0
+    assert loaded.visit_wait_s == 1.8
+    assert loaded.poll_interval_s == 0.3
+    assert loaded.stall_swipe_ms == 200
 
 
 def test_valid_png_keeps_exec_out_bytes():
     raw = _png_bytes()
     assert raw[:8] == b"\x89PNG\r\n\x1a\n"
     assert _valid_png(raw) == raw
+
+
+def test_valid_png_skips_decode_for_clean_frame():
+    raw = _png_bytes()
+    # Same object back: a clean frame must not be decoded and re-encoded.
+    assert _valid_png(raw) is raw
+
+
+def test_valid_png_rejects_junk():
+    with pytest.raises(DeviceError):
+        _valid_png(b"not a png at all")
+    with pytest.raises(DeviceError):
+        _valid_png(b"")
 
 
 def test_valid_png_repairs_adb_shell_crlf():

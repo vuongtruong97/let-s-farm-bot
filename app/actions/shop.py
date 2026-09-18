@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import time
+from typing import NamedTuple
 
 from app.actions.farming import Action, ActionResult
+from app.actions.timing import LoopTiming
 from app.config import SCREENSHOT_DIR, AppConfig
 from app.controller.camera import CameraManager
 from app.controller.device import DeviceController
@@ -21,18 +23,23 @@ from app.storage.botdata import (
 from app.storage.logger import get_logger
 from app.vision.detector import DetectedObject
 from app.vision.newspaper import (
+    MIN_CLOTH_SHARE,
     NewspaperDetector,
     ShopSlot,
+    ad_cell_is_dim,
     bgr_png_bytes,
     crate_proof_crop,
-    crate_views_differ,
+    crate_view_shift,
+    newspaper_fingerprint,
+    newspaper_fingerprints_differ,
+    stall_edge_cloth,
 )
 from app.vision.overlay import save_overlay
 from app.vision.regions import (
     NEWS_OPEN_LEFT_PAGE,
     NEWS_PAGE_COUNT,
+    NEWS_PROMO_SLOTS,
     STALL_PAN_MAX,
-    STALL_SWIPE_MS,
     hud_tap,
     news_spread_slots,
     stall_swipe_px,
@@ -41,6 +48,20 @@ from app.vision.screen import GameScreen, ScreenDetection, ScreenDetector
 from app.vision.template_matcher import TemplateMatcher, as_bgr
 
 log = get_logger("ACTION")
+
+# Two settled frames this close apart show the same view: the table is against
+# an edge, or the game swallowed the swipe.
+STALL_STILL_PX = 8.0
+# An edge has a little give, so a swipe into one still shifts the table 25-30px
+# before it springs back. Below this the table crept without carrying a new
+# window into view.
+STALL_CREEP_PX = 40.0
+
+
+class StallPan(NamedTuple):
+    moved: bool
+    dx: float
+    png: object
 
 
 class NewspaperActions:
@@ -54,7 +75,8 @@ class NewspaperActions:
         camera: CameraManager | None = None,
         wait_s: float | None = None,
         buy_wait_s: float | None = None,
-        visit_wait_s: float = 3.5,
+        visit_wait_s: float | None = None,
+        poll_interval_s: float | None = None,
         retries: int = 1,
     ):
         self.device = device
@@ -73,17 +95,114 @@ class NewspaperActions:
         self.buy_wait_s = (
             float(self.config.buy_wait_s) if buy_wait_s is None else buy_wait_s
         )
-        self.visit_wait_s = visit_wait_s
+        self.visit_wait_s = (
+            float(self.config.visit_wait_s) if visit_wait_s is None else visit_wait_s
+        )
+        self.poll_interval_s = (
+            float(getattr(self.config, "poll_interval_s", 0.0))
+            if poll_interval_s is None
+            else poll_interval_s
+        )
+        self.stall_swipe_ms = int(getattr(self.config, "stall_swipe_ms", 280))
         self.retries = retries
         self.wishlist = active_wishlist()
+        self.timing = LoopTiming()
         self._visited_ads: set[tuple] = set()
         self._planned_ads: list[tuple] = []
-        self._news_occupancy: tuple = ()
+        self._news_fp = None
         self._news_left_page = NEWS_OPEN_LEFT_PAGE
+        # Verdict of the last frame a poll classified, so the caller can read
+        # it back instead of paying for detect twice on the same frame.
+        self._last_screen = None
+        # Screenshot handed from one step to the next so the same frame is not
+        # captured twice (a screencap costs far more than a sleep).
+        self._pending_png = None
+        self._pending_screen: ScreenDetection | None = None
+        self._pending_buys: list[tuple] = []
+        self._templates_loaded = False
+        self._screen_size: tuple[int, int] | None = None
+        try:
+            self.device.timing = self.timing
+        except AttributeError:
+            pass
 
     def _sync_vision_thresholds(self) -> None:
         self.news.buy_threshold = self.config.buy_threshold
         self.news.news_threshold = self.config.news_threshold
+
+    def _publish_waits(self) -> None:
+        self.timing.set_waits(
+            action_wait_s=self.wait_s,
+            buy_wait_s=self.buy_wait_s,
+            visit_wait_s=self.visit_wait_s,
+            poll_interval_s=self.poll_interval_s,
+        )
+
+    # --- measured device I/O -------------------------------------------------
+
+    def _shot(self):
+        """Every screenshot in the loop goes through here so it is counted."""
+        self._drop_pending()
+        with self.timing.adb(shot=True):
+            return self.device.screenshot()
+
+    def _tap(self, x: int, y: int) -> None:
+        self._drop_pending()
+        with self.timing.adb():
+            self.device.tap(x, y)
+
+    def _swipe(self, x1: int, y1: int, x2: int, y2: int, ms: int | None = None) -> None:
+        self._drop_pending()
+        with self.timing.adb():
+            self.device.swipe(x1, y1, x2, y2, ms)
+
+    def _resolution(self) -> tuple[int, int]:
+        """Cached: `wm size` is an ADB round trip and _ad_cell asks per ad."""
+        if self._screen_size is None:
+            with self.timing.adb():
+                self._screen_size = self.device.resolution()
+        return self._screen_size
+
+    def _sleep(self, seconds: float) -> None:
+        self.timing.sleep(seconds)
+
+    def _stash_png(self, png, screen: ScreenDetection | None = None) -> None:
+        """Hand the frame just captured to the next step. Any tap, swipe or
+        screenshot invalidates it, so a stale frame can never be acted on."""
+        self._pending_png = png
+        self._pending_screen = screen
+
+    def _drop_pending(self) -> None:
+        self._pending_png = None
+        self._pending_screen = None
+
+    def _take_pending(self):
+        png, screen = self._pending_png, self._pending_screen
+        self._pending_png = None
+        self._pending_screen = None
+        return png, screen
+
+    def _poll_until(self, check, timeout_s: float, step: str, first_png=None):
+        """Screenshot until check(png) is truthy or the deadline passes.
+
+        Returns (last_png, value). timeout_s is a ceiling, not a sleep: a shop
+        that draws in 0.4s costs 0.4s even when the ceiling is 2.5s.
+        """
+        deadline = time.monotonic() + max(0.0, float(timeout_s))
+        png = first_png
+        while True:
+            if png is None:
+                png = self._shot()
+            value = check(png)
+            if value:
+                return png, value
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.timing.deadline_hit(step)
+                return png, value
+            if self.poll_interval_s > 0:
+                self._sleep(min(self.poll_interval_s, remaining))
+            png = None
 
     def shop_from_newspaper(
         self,
@@ -98,12 +217,29 @@ class NewspaperActions:
             return self.browse_newspaper(
                 limit=limit, should_stop=should_stop, reset_home=reset_home
             )
+        self.timing.reset()
+        self._publish_waits()
+        try:
+            return self._shop_loop(kind, limit, should_stop, reset_home, until_done)
+        finally:
+            # Baseline line to compare against after every wait change.
+            log.info(self.timing.summary_line())
+
+    def _shop_loop(
+        self,
+        kind: str,
+        limit: int,
+        should_stop,
+        reset_home: bool,
+        until_done: bool,
+    ) -> ActionResult:
         home = self._reset_home_if_needed(reset_home)
         if home is not None and not home.success:
             return home
-        self.matcher.reload()
+        self.matcher.reload_if_changed()
         self.wishlist = active_wishlist()
         self._sync_vision_thresholds()
+        self._templates_loaded = True
         bought = 0
         visits = 0
         max_visits = (
@@ -119,29 +255,33 @@ class NewspaperActions:
             if should_stop and should_stop():
                 return ActionResult(False, Action("STOP", "newspaper"), "stopped")
             visits += 1
-            # After close_shop the camera sits on that farm's house, same as home.
-            found = self.find_column()
-            if not found.success:
-                return found
-            opened = self.open_newspaper()
-            if not opened.success:
-                return opened
-            ad = self._next_listing(kind)
-            if ad is None:
-                exhausted = True
-                break
-            visit = self.visit_shop(ad)
-            if not visit.success:
-                self.close_shop()
-                last = visit
-                continue
-            buy = self.buy_wishlist()
-            last = buy
-            if buy.success:
-                bought += 1
-            closed = self.close_shop()
-            if not closed.success and last.success:
-                last = closed
+            with self.timing.step("shop") as shop_step:
+                # After close_shop the camera sits on that farm's house, same as home.
+                found = self.find_column()
+                if not found.success:
+                    return found
+                opened = self.open_newspaper()
+                if not opened.success:
+                    return opened
+                ad = self._next_listing(kind)
+                if ad is None:
+                    shop_step.discard = True
+                    exhausted = True
+                    break
+                visit = self.visit_shop(ad)
+                if not visit.success:
+                    self.close_shop()
+                    last = visit
+                    continue
+                buy = self.buy_wishlist()
+                last = buy
+                if buy.success:
+                    bought += 1
+                closed = self.close_shop()
+                if not closed.success and last.success:
+                    last = closed
+            log.info(self.timing.step_line("shop"))
+        self._templates_loaded = False
         if last.success or bought or exhausted:
             parked = self.go_home()
             if not parked.success:
@@ -162,7 +302,7 @@ class NewspaperActions:
         """Drop visited/plan memory so the next cycle scans the newspaper fresh."""
         self._visited_ads.clear()
         self._planned_ads = []
-        self._news_occupancy = ()
+        self._news_fp = None
         self._news_left_page = NEWS_OPEN_LEFT_PAGE
         if self.camera is not None:
             self.camera.clear_history()
@@ -190,7 +330,7 @@ class NewspaperActions:
             if should_stop and should_stop():
                 self.close_shop()
                 return ActionResult(False, Action("STOP", "browse"), "stopped")
-            png = self.device.screenshot()
+            png = self._shot()
             ads = self.news.find_ads(png, left_page=self._news_left_page)
             matched = self.news.find_wishlist_ads(
                 png, self.wishlist, left_page=self._news_left_page, ads=ads
@@ -223,54 +363,105 @@ class NewspaperActions:
     def go_home(self) -> ActionResult:
         """Return to the house-centered farm via friends → visit → close → shop_home."""
         action = Action("GO_HOME", "house")
-        fx, fy = self._tap_hud("hud_friends")
-        action.x, action.y = fx, fy
-        time.sleep(self.wait_s)
-        self._tap_hud("friends_first")
-        time.sleep(self.visit_wait_s)
-        self._tap_hud("shop_close")
-        time.sleep(self.wait_s)
-        self._tap_hud("shop_home")
-        time.sleep(self.visit_wait_s)
-        self.camera.clear_history()
-        log.info("GO_HOME house")
-        return ActionResult(True, action)
+        with self.timing.step("go_home", deadline_s=self.visit_wait_s):
+            fx, fy = self._tap_hud("hud_friends")
+            action.x, action.y = fx, fy
+            self._sleep(self.wait_s)
+            self._tap_hud("friends_first")
+            # Landing on a friend's farm: wait for anything other than loading.
+            self._poll_until(self._farm_drawn, self.visit_wait_s, step="go_home")
+            self._tap_hud("shop_close")
+            self._sleep(self.wait_s)
+            self._tap_hud("shop_home")
+            png, _ = self._poll_until(self._farm_drawn, self.visit_wait_s, step="go_home")
+            self._stash_png(png)
+            self.camera.clear_history()
+            log.info("GO_HOME house")
+            return ActionResult(True, action)
+
+    def _farm_drawn(self, png) -> bool:
+        """Own/visited farm is up: HUD showing and no stall or newspaper on top."""
+        screen = self.screens.detect(png)
+        return screen.screen is GameScreen.FARM
 
     def _tap_hud(self, name: str) -> tuple[int, int]:
-        width, height = self.device.resolution()
+        width, height = self._resolution()
         point = hud_tap(name, width, height)
-        self.device.tap(*point)
+        self._tap(*point)
         return point
 
-    def _stall_rewind(self, png, should_stop=None):
-        """Pan the stall table left until the view stops changing."""
-        for _ in range(STALL_PAN_MAX):
-            if should_stop and should_stop():
-                return None
-            moved, png = self._stall_pan(png, "left")
-            if not moved:
+    def _stall_rewind(self, png):
+        """Pan left until the table stops moving, and hand back that frame.
+
+        Swipes that come one after another carry the table a different distance
+        than a deliberate nudge does, so counting swipes never lands on the
+        left edge. Measuring each one does.
+        """
+        for _ in range(STALL_PAN_MAX + 2):
+            if self._stall_ends_at(png, "left"):
                 return png
+            pan = self._stall_pan(png, "left", step="stall_rewind")
+            png = pan.png
+            if not pan.moved:
+                log.info("STALL rewound to the left edge")
+                return png
+        self.timing.deadline_hit("stall_rewind")
+        log.info("STALL rewind gave up at the pan cap")
         return png
 
-    def _stall_pan(self, png, direction: str) -> tuple[bool, object]:
-        self._swipe_stall(direction)
-        time.sleep(self.wait_s)
-        after = self.device.screenshot()
-        if not crate_views_differ(png, after):
-            log.info(f"STALL edge {direction}")
-            return False, after
-        log.info(f"STALL pan {direction}")
-        return True, after
+    def _stall_ends_at(self, png, side: str) -> bool:
+        """True when the table visibly runs out on that side.
+
+        A stall too wide for the window always leaves a crate clipped against
+        the frame, hiding the cloth behind it. Bare cloth is proof that nothing
+        is hidden there, which saves the pair of swipes it takes to prove the
+        same thing by pushing against the stop.
+        """
+        share = stall_edge_cloth(png, side)
+        if share < MIN_CLOTH_SHARE:
+            return False
+        log.info(f"STALL {side} end in view, cloth={share:.2f}")
+        return True
+
+    def _stall_pan(self, png, direction: str, *, step: str = "stall_pan") -> StallPan:
+        with self.timing.step(step):
+            self._swipe_stall(direction)
+            after = self._stall_settled(step)
+            travel = abs(crate_view_shift(png, after))
+            if travel < STALL_CREEP_PX:
+                # Measured on a still frame, a swipe the game swallowed reads
+                # the same as a real edge. Ask once more before believing it.
+                self._swipe_stall(direction)
+                after = self._stall_settled(step)
+                travel = abs(crate_view_shift(png, after))
+                if travel < STALL_CREEP_PX:
+                    log.info(f"STALL edge {direction} dx={travel:.0f}")
+                    return StallPan(False, travel, after)
+            log.info(f"STALL pan {direction} dx={travel:.0f}")
+            return StallPan(True, travel, after)
+
+    def _stall_settled(self, step: str = "stall_pan"):
+        """Wait out the glide: the table keeps sliding after the finger lifts,
+        and a frame caught mid-glide measures a distance never travelled."""
+        deadline = time.monotonic() + max(0.0, self.wait_s)
+        png = self._shot()
+        while time.monotonic() < deadline:
+            nxt = self._shot()
+            if abs(crate_view_shift(png, nxt)) < STALL_STILL_PX:
+                return nxt
+            png = nxt
+        self.timing.deadline_hit(step)
+        return png
 
     def _swipe_stall(self, direction: str) -> None:
-        width, height = self.device.resolution()
+        width, height = self._resolution()
         x1, y1, x2, y2 = stall_swipe_px(width, height, direction)
-        self.device.swipe(x1, y1, x2, y2, STALL_SWIPE_MS)
+        self._swipe(x1, y1, x2, y2, self.stall_swipe_ms)
 
     def _reset_home_if_needed(self, reset_home: bool) -> ActionResult | None:
         if not reset_home:
             return None
-        png = self.device.screenshot()
+        png = self._shot()
         if self._newspaper_is_open(png) or self.news.find_header(png) is not None:
             return None
         return self.go_home()
@@ -283,47 +474,60 @@ class NewspaperActions:
         Cached coordinates are never treated as success on their own.
         """
         action = Action("FIND_COLUMN", "newspaper_stand")
-        png = self.device.screenshot()
-        stand = self.news.find_stand(png)
-        if stand is not None:
-            log.info("FIND_COLUMN already on screen")
+        with self.timing.step("find_column"):
+            # close_shop / go_home already captured the farm — reuse that frame.
+            png, _ = self._take_pending()
+            png = png if png is not None else self._shot()
+            stand = self.news.find_stand(png)
+            if stand is not None:
+                log.info("FIND_COLUMN already on screen")
+                return self._remember_stand(action, stand)
+            self.camera.pan_to_column()
+            self._sleep(self.wait_s)
+            png = self._shot()
+            stand = self.news.find_stand(png)
+            if stand is None:
+                log.info("FIND_COLUMN FAIL stand not on screen after pan")
+                return ActionResult(False, action, "newspaper stand not found")
             return self._remember_stand(action, stand)
-        self.camera.pan_to_column()
-        time.sleep(self.wait_s)
-        png = self.device.screenshot()
-        stand = self.news.find_stand(png)
-        if stand is None:
-            log.info("FIND_COLUMN FAIL stand not on screen after pan")
-            return ActionResult(False, action, "newspaper stand not found")
-        return self._remember_stand(action, stand)
 
     def open_newspaper(self) -> ActionResult:
         action = Action("OPEN_NEWSPAPER", "newspaper_stand")
-        cached = load_column()
-        if cached is not None:
-            action.x, action.y = cached
-            self.device.tap(*cached)
-            time.sleep(self.wait_s)
-            if self._newspaper_is_open():
+        # Opening the paper is a screen transition, so it gets the screen
+        # ceiling: one screencap can outlast action_wait_s on its own, which
+        # would leave the poll with a single look taken before the paper drew.
+        deadline = self.visit_wait_s
+        with self.timing.step("open_newspaper", deadline_s=deadline):
+            cached = load_column()
+            if cached is not None:
+                action.x, action.y = cached
+                self._tap(*cached)
+                _, opened = self._poll_until(
+                    self._newspaper_is_open, deadline, step="open_newspaper"
+                )
+                if opened:
+                    return self._opened_at_first_spread(action)
+                log.info("FIND_COLUMN cache miss — searching")
+                clear_column()
+            # close_shop already captured the farm behind the stall.
+            png, _ = self._take_pending()
+            png = png if png is not None else self._shot()
+            if self._newspaper_is_open(png):
                 return self._opened_at_first_spread(action)
-            log.info("FIND_COLUMN cache miss — searching")
+            stand = self.news.find_stand(png)
+            if stand is None:
+                return ActionResult(False, action, "newspaper stand not on screen")
+            action.x, action.y = _center(stand)
+            save_column(*_center(stand))
+            self._tap(*_center(stand))
+            after, opened = self._poll_until(
+                self._newspaper_is_open, deadline, step="open_newspaper"
+            )
+            self._debug_shot(after, None, "after_open_newspaper.png")
+            if opened:
+                return self._opened_at_first_spread(action)
             clear_column()
-        png = self.device.screenshot()
-        if self._newspaper_is_open(png):
-            return self._opened_at_first_spread(action)
-        stand = self.news.find_stand(png)
-        if stand is None:
-            return ActionResult(False, action, "newspaper stand not on screen")
-        action.x, action.y = _center(stand)
-        save_column(*_center(stand))
-        self.device.tap(*_center(stand))
-        time.sleep(self.wait_s)
-        after = self.device.screenshot()
-        self._debug_shot(after, None, "after_open_newspaper.png")
-        if self._newspaper_is_open(after):
-            return self._opened_at_first_spread(action)
-        clear_column()
-        return ActionResult(False, action, "newspaper did not open")
+            return ActionResult(False, action, "newspaper did not open")
 
     def _opened_at_first_spread(self, action: Action) -> ActionResult:
         self._news_left_page = NEWS_OPEN_LEFT_PAGE
@@ -336,27 +540,73 @@ class NewspaperActions:
         return ActionResult(True, action)
 
     def _newspaper_is_open(self, png=None) -> bool:
-        source = png if png is not None else self.device.screenshot()
-        hit = self.matcher.match_one(as_bgr(source), "newspaper_ad", threshold=0.72)
-        return hit is not None
+        source = png if png is not None else self._shot()
+        image = as_bgr(source)
+        hit = self.matcher.match_one(image, "newspaper_ad", threshold=0.72)
+        if hit is None:
+            return False
+        # The left leaf (page 2) finishes turning after the right one. Scanning
+        # at that moment plans only page 3 and never comes back.
+        return self._left_page_has_listing(image, NEWS_OPEN_LEFT_PAGE)
+
+    def _left_page_has_listing(self, image, left: int) -> bool:
+        h, w = image.shape[:2]
+        for page, slot, x, y, bw, bh in news_spread_slots(w, h, left):
+            if page != left or (page, slot) in NEWS_PROMO_SLOTS:
+                continue
+            if self.news._slot_coin(image[y : y + bh, x : x + bw]) is not False:
+                return True
+        return False
+
+    def _shop_or_popup(self, png) -> ScreenDetection | None:
+        """Terminal states after tapping an ad: the stall, or a popup to close."""
+        screen = self.screens.detect(png)
+        self._last_screen = screen
+        if screen.screen in (GameScreen.PLAYER_SHOP, GameScreen.POPUP):
+            return screen
+        return None
 
     def visit_shop(self, ad: DetectedObject) -> ActionResult:
         action = Action("VISIT_SHOP", "ad", ad.x + ad.width // 2, ad.y + ad.height // 2)
         self._visited_ads.add(self._ad_cell(ad))
-        self.device.tap(action.x, action.y)
-        time.sleep(self.visit_wait_s)
-        png = self.device.screenshot()
-        screen = self.screens.detect(png)
-        self._debug_shot(png, screen, "after_visit_shop.png")
-        if screen.screen is GameScreen.POPUP:
-            self._close_popup(screen)
-            return ActionResult(False, action, "diamond/popup — closed, not spent")
-        if screen.screen is GameScreen.PLAYER_SHOP:
-            return ActionResult(True, action)
-        return ActionResult(False, action, f"screen={screen.screen.value}")
+        with self.timing.step("visit_shop", deadline_s=self.visit_wait_s):
+            self._tap(action.x, action.y)
+            self._last_screen = None
+            png, screen = self._poll_until(
+                self._shop_or_popup, self.visit_wait_s, step="visit_shop"
+            )
+            if screen is None:
+                # The poll already classified this frame; re-running detect on
+                # it only burns another second to reach the same verdict.
+                screen = self._last_screen or self.screens.detect(png)
+            self._debug_shot(png, screen, "after_visit_shop.png")
+            if screen.screen is GameScreen.POPUP:
+                self._close_popup(screen)
+                self.timing.mark("visit_fail")
+                return ActionResult(False, action, "diamond/popup — closed, not spent")
+            if screen.screen is GameScreen.PLAYER_SHOP:
+                self._stash_png(png, screen)
+                return ActionResult(True, action)
+            self.timing.mark("visit_fail")
+            return ActionResult(False, action, f"screen={screen.screen.value}")
 
     def buy_wishlist(self, should_stop=None, max_buys: int | None = None) -> ActionResult:
-        self.matcher.reload()
+        with self.timing.step("buy_wishlist"):
+            try:
+                return self._buy_loop(should_stop, max_buys)
+            finally:
+                # Proof PNGs and purchases.json are written once, outside the
+                # tap-verify-tap window.
+                self._flush_buys()
+
+    def _flush_buys(self) -> None:
+        pending, self._pending_buys = self._pending_buys, []
+        for item, kind, image, qty in pending:
+            record_purchase(item, kind=kind, image=image, qty=qty)
+
+    def _buy_loop(self, should_stop=None, max_buys: int | None = None) -> ActionResult:
+        if not self._templates_loaded:
+            self.matcher.reload_if_changed()
         self.wishlist = active_wishlist()
         self._sync_vision_thresholds()
         missing = self._missing_item_templates()
@@ -373,53 +623,83 @@ class NewspaperActions:
                 Action("BUY", "none"),
                 f"missing template {missing[0]}.png — capture item to data/templates/",
             )
-        png = self.device.screenshot()
-        screen = self.screens.detect(png)
+        # visit_shop already captured and classified this frame.
+        png, screen = self._take_pending()
+        if png is None:
+            png = self._shot()
+        if screen is None:
+            screen = self.screens.detect(png)
         if screen.screen not in (GameScreen.PLAYER_SHOP, GameScreen.POPUP):
             return ActionResult(
                 False, Action("BUY", "none"), f"screen={screen.screen.value}"
             )
-        png = self._stall_rewind(png, should_stop)
-        if png is None:
-            return ActionResult(False, Action("STOP", "buy"), "stopped")
         last = ActionResult(False, Action("BUY", "none"), "no wishlist slot")
         bought = 0
         matched: set[str] = set()
         skipped: list[ShopSlot] = []
-        for _ in range(STALL_PAN_MAX + 1):
-            if should_stop and should_stop():
-                return ActionResult(False, Action("STOP", "buy"), "stopped")
-            slots = [
-                slot
-                for slot in self.news.find_slots(png, ready)
-                if not _slot_skipped(slot, skipped)
-            ]
-            if slots:
-                for slot in slots:
-                    if slot.item not in matched:
-                        matched.add(slot.item)
-                        record_purchase(slot.item, kind="match")
-                        log.info(f"WISH match {slot.item} in stall")
-                    proof = _slot_proof_png(png, slot)
-                    qty = self.news.read_crate_qty(png, slot)
-                    result = self._buy_one(slot)
-                    if not result.success:
-                        skipped.append(slot)
-                        if not bought:
-                            last = result
-                        log.info(f"BUY skip {slot.item} {result.error or 'fail'}")
-                        png = self.device.screenshot()
-                        continue
-                    record_purchase(slot.item, kind="buy", image=proof, qty=qty)
-                    last = result
-                    bought += 1
-                    if max_buys is not None and bought >= max_buys:
-                        return last
-                png = self.device.screenshot()
-                continue
-            moved, png = self._stall_pan(png, "right")
-            if not moved:
-                break
+
+        def sweep(png) -> tuple[object, str]:
+            """Buy out each window from the left edge to the right one.
+
+            Returns the last frame and why the leg ended: edge, stop, limit or
+            cap.
+            """
+            nonlocal last, bought
+            at_end = False
+            for _ in range(STALL_PAN_MAX + 1):
+                if should_stop and should_stop():
+                    return png, "stop"
+                with self.timing.step("find_slots"):
+                    slots = [
+                        slot
+                        for slot in self.news.find_slots(png, ready)
+                        if not _slot_skipped(slot, skipped)
+                    ]
+                if slots:
+                    for slot in slots:
+                        if slot.item not in matched:
+                            matched.add(slot.item)
+                            self._pending_buys.append((slot.item, "match", None, None))
+                            log.info(f"WISH match {slot.item} in stall")
+                        proof = _slot_proof_png(png, slot)
+                        qty = self.news.read_crate_qty(png, slot)
+                        result = self._buy_one(slot)
+                        if not result.success:
+                            skipped.append(slot)
+                            if not bought:
+                                last = result
+                            self.timing.mark("buy_skip")
+                            log.info(f"BUY skip {slot.item} {result.error or 'fail'}")
+                            png = self._verify_frame()
+                            continue
+                        self._pending_buys.append((slot.item, "buy", proof, qty))
+                        last = result
+                        bought += 1
+                        if max_buys is not None and bought >= max_buys:
+                            return png, "limit"
+                    # _buy_one already looked at the stall after the tap.
+                    png = self._verify_frame()
+                    continue
+                if at_end or self._stall_ends_at(png, "right"):
+                    return png, "edge"
+                pan = self._stall_pan(png, "right")
+                png = pan.png
+                if not pan.moved:
+                    if pan.dx < STALL_STILL_PX:
+                        return png, "edge"
+                    # The table crept against its edge without carrying a whole
+                    # window in. That sliver is still a frame nobody has looked
+                    # at, so inspect it before calling the leg done.
+                    at_end = True
+            return png, "cap"
+
+        # A stall opens wherever the player left it, so start by finding the
+        # left edge. The sweep covers those same windows on its way back out,
+        # which is why this leg does not look at them.
+        png = self._stall_rewind(png)
+        _png, reason = sweep(png)
+        if reason == "stop":
+            return ActionResult(False, Action("STOP", "buy"), "stopped")
         if not bought:
             if last.error == "no wishlist slot":
                 log.info(f"BUY no slot matched missing={missing}")
@@ -436,7 +716,7 @@ class NewspaperActions:
         """Crop crate icons on the open shop into the icon library."""
         self.matcher.reload()
         action = Action("CAPTURE", "shop")
-        png = self.device.screenshot()
+        png = self._shot()
         screen = self.screens.detect(png)
         self._debug_shot(png, screen, "capture_shop.png")
         if screen.screen is GameScreen.POPUP:
@@ -467,7 +747,7 @@ class NewspaperActions:
         """Crop Daily Dirt ad icons into the newspaper library."""
         self.matcher.reload()
         action = Action("CAPTURE", "newspaper")
-        png = self.device.screenshot()
+        png = self._shot()
         if not self._newspaper_is_open(png):
             return ActionResult(False, action, "open the newspaper first")
         ads = self.news.find_ads(png, left_page=self._news_left_page)
@@ -495,7 +775,7 @@ class NewspaperActions:
         self.matcher.reload()
         self.wishlist = active_wishlist()
         self._sync_vision_thresholds()
-        png = self.device.screenshot()
+        png = self._shot()
         ads = self.news.find_ads(png, left_page=self._news_left_page)
         missing_news = [
             item
@@ -526,7 +806,7 @@ class NewspaperActions:
             log.info("SWIPE newspaper already on page 10")
             return ActionResult(True, action)
         self._turn_newspaper()
-        png = self.device.screenshot()
+        png = self._shot()
         ads = self.news.find_ads(png, left_page=self._news_left_page)
         if self.config.debug:
             self._debug_shot(png, None, "after_swipe_newspaper.png")
@@ -539,7 +819,7 @@ class NewspaperActions:
         self.matcher.reload()
         self.wishlist = active_wishlist()
         self._sync_vision_thresholds()
-        png = self.device.screenshot()
+        png = self._shot()
         ad = self._unused_wishlist_ad(png)
         if ad is None:
             return ActionResult(
@@ -548,13 +828,21 @@ class NewspaperActions:
         return self.visit_shop(ad)
 
     def close_shop(self) -> ActionResult:
-        """Tap the stall/newspaper X. Same HUD point every time — no screenshot."""
+        """Tap the stall/newspaper X, then wait for the farm behind it to draw.
+
+        The frame that proves the farm is back is handed to find_column, so
+        polling here costs no extra screenshot per shop.
+        """
         action = Action("CLOSE_SHOP", "shop")
-        action.x, action.y = self._tap_hud("shop_close")
-        time.sleep(self.wait_s)
-        self.camera.clear_history()
-        log.info(f"CLOSE_SHOP {action.x},{action.y}")
-        return ActionResult(True, action)
+        with self.timing.step("close_shop"):
+            action.x, action.y = self._tap_hud("shop_close")
+            # Closing a stall drops straight back onto that player's farm, so
+            # there is nothing to wait for. The one frame is for the next step
+            # to hunt the stand in; the screencap also paces the next tap.
+            self._stash_png(self._shot())
+            self.camera.clear_history()
+            log.info(f"CLOSE_SHOP {action.x},{action.y}")
+            return ActionResult(True, action)
 
     def _already_on_wishlist(self, crop, *, scene: str = "shop") -> str | None:
         for item, spec in load_wishlist().items():
@@ -580,30 +868,55 @@ class NewspaperActions:
             return None
         return row["id"]
 
+    def _verify_frame(self):
+        """Frame _buy_one left behind, or a fresh one if it was invalidated."""
+        png, _ = self._take_pending()
+        return png if png is not None else self._shot()
+
     def _buy_one(self, slot: ShopSlot) -> ActionResult:
         action = Action("BUY", slot.item, *slot.center, crop=slot.item)
-        self.device.tap(*slot.center)
-        time.sleep(self.buy_wait_s)
-        after = self.device.screenshot()
-        if self.news.slot_sold(after, slot, had_coin=slot.has_coin):
-            log.info(f"BUY {slot.item} SUCCESS sold")
-            return ActionResult(True, action)
-        after_slots = self.news.find_slots(after, self.wishlist)
-        still = [
-            s for s in after_slots if s.item == slot.item and _overlap(s, slot) > 0.4
-        ]
-        if still:
+        # Only the item just tapped matters — rescanning the whole wishlist per
+        # poll would be wasted matching.
+        lookup = {slot.item: self.wishlist.get(slot.item) or {}}
+        with self.timing.step("buy_one", deadline_s=self.buy_wait_s):
+            self._tap(*slot.center)
+            after, verdict = self._poll_until(
+                lambda png: self._slot_taken(png, slot, lookup),
+                self.buy_wait_s,
+                step="buy_one",
+            )
+            self._stash_png(after)
+            if verdict:
+                self.timing.mark("buys")
+                log.info(f"BUY {slot.item} SUCCESS {verdict}")
+                return ActionResult(True, action)
+            # Waited the whole ceiling and the crate is still on sale: the tap
+            # did not register.
+            self.timing.mark("verify_fail")
             return ActionResult(False, action, "verify failed")
-        log.info(f"BUY {slot.item} SUCCESS")
-        return ActionResult(True, action)
+
+    def _slot_taken(self, png, slot: ShopSlot, lookup: dict) -> str | None:
+        """'sold' when the crate greyed out, 'gone' when it left the table."""
+        if self.news.slot_sold(png, slot, had_coin=slot.has_coin):
+            return "sold"
+        still = [
+            s
+            for s in self.news.find_slots(png, lookup)
+            if s.item == slot.item and _overlap(s, slot) > 0.4
+        ]
+        return None if still else "gone"
 
     def _next_listing(self, mode: str) -> DetectedObject | None:
+        with self.timing.step("next_listing"):
+            return self._next_listing_inner(mode)
+
+    def _next_listing_inner(self, mode: str) -> DetectedObject | None:
         remaining = self._planned_remaining()
         if remaining:
             log.info(f"NEWS reuse plan remaining={len(remaining)} next={remaining[0]}")
             return self._seek_next_planned()
-        png = self.device.screenshot()
-        if self._plan_needs_refresh(png):
+        png = self._shot()
+        if self._plan_needs_refresh(png, mode):
             self._rescan_plan(mode, first_png=png)
             self.close_shop()
             if not self._planned_remaining():
@@ -613,21 +926,53 @@ class NewspaperActions:
                 return None
         return self._seek_next_planned()
 
-    def _plan_needs_refresh(self, png) -> bool:
+    def _plan_needs_refresh(self, png, mode: str) -> bool:
         if not self._planned_ads:
             return True
-        occupancy = self._spread_occupancy(png)
-        if occupancy != self._news_occupancy:
-            log.info(
-                f"NEWS changed occupancy {self._news_occupancy} -> {occupancy}"
-            )
+        if self._visited_on_spread() and not self._visited_still_dim(png):
+            log.info("NEWS visited listing looks fresh")
             return True
-        log.info("NEWS same paper, plan done")
+        if mode == "sweep" and self._unvisited_bright_ads(png):
+            log.info("NEWS unvisited bright listing still on the spread")
+            return True
+        if not self._visited_on_spread():
+            if self._news_fp is None:
+                return True
+            if newspaper_fingerprints_differ(png, self._news_fp):
+                log.info("NEWS first spread listings changed")
+                return True
+        log.info("NEWS same paper, nothing left to visit")
         return False
 
-    def _spread_occupancy(self, png) -> tuple:
-        ads = self.news.find_ads(png, left_page=self._news_left_page)
-        return tuple(self._ad_cell(ad) for ad in ads)
+    def _unvisited_bright_ads(self, png) -> bool:
+        for ad in self.news.find_ads(png, left_page=self._news_left_page):
+            if self._ad_cell(ad) not in self._visited_ads:
+                return True
+        return False
+
+    def _visited_on_spread(self) -> bool:
+        left = self._news_left_page
+        right = None if left >= NEWS_PAGE_COUNT else left + 1
+        for cell in self._visited_ads:
+            page = cell[0]
+            if page == left or (right is not None and page == right):
+                return True
+        return False
+
+    def _visited_still_dim(self, png) -> bool:
+        """True when every shop we tapped on this spread is still greyed out."""
+        image = as_bgr(png)
+        h, w = image.shape[:2]
+        checked = 0
+        for page, slot, x, y, bw, bh in news_spread_slots(w, h, self._news_left_page):
+            if (page, slot) not in self._visited_ads:
+                continue
+            checked += 1
+            roi = image[y : y + bh, x : x + bw]
+            if not ad_cell_is_dim(roi):
+                log.info(f"NEWS cell {page},{slot} is bright again")
+                return False
+        return checked > 0
 
     def _planned_remaining(self) -> list[tuple]:
         return [cell for cell in self._planned_ads if cell not in self._visited_ads]
@@ -635,7 +980,7 @@ class NewspaperActions:
     def _rescan_plan(self, mode: str, first_png) -> None:
         self._visited_ads.clear()
         self._planned_ads = []
-        self._news_occupancy = self._spread_occupancy(first_png)
+        self._news_fp = newspaper_fingerprint(first_png)
         wishlist_cells: list[tuple] = []
         coin_cells: list[tuple] = []
         png = first_png
@@ -644,7 +989,7 @@ class NewspaperActions:
             if self._news_left_page >= NEWS_PAGE_COUNT:
                 break
             self._turn_newspaper()
-            png = self.device.screenshot()
+            png = self._shot()
         if mode == "sweep":
             seen = set(wishlist_cells)
             self._planned_ads = wishlist_cells + [c for c in coin_cells if c not in seen]
@@ -690,7 +1035,7 @@ class NewspaperActions:
 
     def _ad_from_cell(self, cell: tuple) -> DetectedObject | None:
         page, slot = cell[0], cell[1]
-        width, height = self.device.resolution()
+        width, height = self._resolution()
         for p, s, x, y, w, h in news_spread_slots(
             width, height, self._news_left_page
         ):
@@ -699,32 +1044,32 @@ class NewspaperActions:
         return None
 
     def _next_ad(self) -> DetectedObject | None:
-        png = self.device.screenshot()
+        png = self._shot()
         wanted = self._unused_wishlist_ad(png)
         if wanted is not None:
             return wanted
         while self._news_left_page < NEWS_PAGE_COUNT:
             self._turn_newspaper()
-            wanted = self._unused_wishlist_ad(self.device.screenshot())
+            wanted = self._unused_wishlist_ad(self._shot())
             if wanted is not None:
                 return wanted
         return None
 
     def _next_coin_ad(self) -> DetectedObject | None:
-        png = self.device.screenshot()
+        png = self._shot()
         wanted = self._unused_coin_ad(png)
         if wanted is not None:
             return wanted
         while self._news_left_page < NEWS_PAGE_COUNT:
             self._turn_newspaper()
-            wanted = self._unused_coin_ad(self.device.screenshot())
+            wanted = self._unused_coin_ad(self._shot())
             if wanted is not None:
                 return wanted
         return None
 
     def _ad_cell(self, ad: DetectedObject) -> tuple:
         """Stable listing id: (page, slot). Same pixels on another spread are a different shop."""
-        width, height = self.device.resolution()
+        width, height = self._resolution()
         cx = ad.x + max(1, ad.width) // 2
         cy = ad.y + max(1, ad.height) // 2
         for page, slot, x, y, w, h in news_spread_slots(
@@ -760,12 +1105,12 @@ class NewspaperActions:
         self._swipe_next_pages()
         if self._news_left_page < NEWS_PAGE_COUNT:
             self._news_left_page = min(NEWS_PAGE_COUNT, self._news_left_page + 2)
-        time.sleep(self.wait_s)
+        self._sleep(self.wait_s)
 
     def _swipe_next_pages(self) -> None:
-        width, height = self.device.resolution()
+        width, height = self._resolution()
         y = height // 2
-        self.device.swipe(int(width * 0.72), y, int(width * 0.28), y, 280)
+        self._swipe(int(width * 0.72), y, int(width * 0.28), y, 280)
 
     def _missing_item_templates(self) -> list[str]:
         missing: list[str] = []
@@ -788,12 +1133,12 @@ class NewspaperActions:
             self.device.back()
             return
         close = max(closes, key=lambda o: o.confidence)
-        self.device.tap(close.x + close.width // 2, close.y + close.height // 2)
+        self._tap(close.x + close.width // 2, close.y + close.height // 2)
 
     def _debug_shot(self, png, screen: ScreenDetection | None, name: str) -> None:
         if not self.config.debug:
             return
-        detection = screen if screen is not None else self.screens.detect(png)
+        detection = screen if screen is not None else self.screens.detect(png, full=True)
         dest = SCREENSHOT_DIR / "debug" / name
         dest.parent.mkdir(parents=True, exist_ok=True)
         extra = []

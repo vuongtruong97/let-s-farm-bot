@@ -11,7 +11,9 @@ from app.config import DATA_DIR
 from app.vision.regions import UI_REGIONS
 
 TEMPLATES_DIR = DATA_DIR / "templates"
-DEFAULT_SCALES = (1.0, 0.85, 0.92, 1.08, 1.15)
+# The emulator is pinned to 1920x1080 and templates are captured from it, so
+# UI art always lands at 1:1. Item matching passes its own scales.
+DEFAULT_SCALES = (1.0,)
 
 
 @dataclass(frozen=True)
@@ -60,16 +62,36 @@ class TemplateMatcher:
         self.threshold = threshold
         self.scales = scales
         self._templates: dict[str, np.ndarray] = {}
+        self._stamp: tuple = ()
         self.reload()
 
     def reload(self) -> None:
         self._templates = {}
+        self._stamp = self._dir_stamp()
         if not self.templates_dir.is_dir():
             return
         for path in sorted(self.templates_dir.glob("*.png")):
             image = cv2.imread(str(path), cv2.IMREAD_COLOR)
             if image is not None:
                 self._templates[path.stem] = image
+
+    def reload_if_changed(self) -> bool:
+        """Reload only when a template file was added, removed or rewritten.
+        Decoding every PNG on disk per job is pure overhead in the shop loop."""
+        if self._templates and self._dir_stamp() == self._stamp:
+            return False
+        self.reload()
+        return True
+
+    def _dir_stamp(self) -> tuple:
+        if not self.templates_dir.is_dir():
+            return ()
+        return tuple(
+            sorted(
+                (path.name, path.stat().st_mtime_ns, path.stat().st_size)
+                for path in self.templates_dir.glob("*.png")
+            )
+        )
 
     @property
     def names(self) -> tuple[str, ...]:

@@ -1,53 +1,25 @@
 {
   "purchases": [
     {
-      "item": "coc_mo_rong_dat",
-      "at": "2026-09-17T05:52:17+07:00",
-      "kind": "buy",
-      "image": "buy_05"
-    },
-    {
-      "item": "coc_mo_rong_dat",
-      "at": "2026-09-17T05:52:14+07:00",
-      "kind": "match"
-    },
-    {
-      "item": "bua_mo_rong_dat",
-      "at": "2026-09-17T05:52:14+07:00",
-      "kind": "buy",
-      "image": "buy_04"
-    },
-    {
-      "item": "bua_mo_rong_dat",
-      "at": "2026-09-17T05:52:11+07:00",
-      "kind": "match"
-    },
-    {
-      "item": "thanh_vang",
-      "at": "2026-09-17T05:41:08+07:00",
-      "kind": "buy",
-      "image": "buy_03"
-    },
-    {
-      "item": "thanh_vang",
-      "at": "2026-09-17T05:41:05+07:00",
-      "kind": "match"
-    },
-    {
-      "item": "trung",
-      "at": "2026-09-17T02:25:23+07:00",
+      "item": "pho_mai",
+      "at": "2026-09-18T15:49:30+07:00",
       "kind": "buy",
       "image": "buy_02"
     },
     {
-      "item": "trung",
-      "at": "2026-09-17T02:25:20+07:00",
+      "item": "pho_mai",
+      "at": "2026-09-18T15:49:30+07:00",
+      "kind": "match"
+    },
+    {
+      "item": "pho_mai",
+      "at": "2026-09-18T15:26:49+07:00",
       "kind": "buy",
       "image": "buy_01"
     },
     {
-      "item": "trung",
-      "at": "2026-09-17T02:25:17+07:00",
+      "item": "pho_mai",
+      "at": "2026-09-18T15:26:49+07:00",
       "kind": "match"
     }
   ]

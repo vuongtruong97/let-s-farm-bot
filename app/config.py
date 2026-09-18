@@ -26,6 +26,9 @@ class AppConfig:
     loop_rest_min: float = 5.0
     action_wait_s: float = 0.9
     buy_wait_s: float = 2.0
+    visit_wait_s: float = 2.5
+    poll_interval_s: float = 0.0
+    stall_swipe_ms: int = 280
 
     def screenshot_dir(self) -> Path:
         SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -64,6 +67,9 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
         "loop_rest_min": config.loop_rest_min,
         "action_wait_s": config.action_wait_s,
         "buy_wait_s": config.buy_wait_s,
+        "visit_wait_s": config.visit_wait_s,
+        "poll_interval_s": config.poll_interval_s,
+        "stall_swipe_ms": config.stall_swipe_ms,
     }
     target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return target

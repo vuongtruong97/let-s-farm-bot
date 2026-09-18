@@ -209,7 +209,7 @@ def _detect(args: argparse.Namespace, config) -> int:
         device.connect()
         source = device.screenshot()
     matcher = TemplateMatcher(threshold=config.template_threshold)
-    result = ScreenDetector(matcher).detect(source)
+    result = ScreenDetector(matcher).detect(source, full=True)
     if result.screen is GameScreen.FARM:
         extra = FieldDetector().detect(source)
         stand = NewspaperDetector().find_stand(source)
@@ -252,7 +252,7 @@ def _fields(args: argparse.Namespace, config) -> int:
             f"center={cx},{cy}\t{field.confidence:.3f}"
         )
     if config.debug:
-        screen = ScreenDetector().detect(source)
+        screen = ScreenDetector().detect(source, full=True)
         combined = ScreenDetection(
             screen.screen,
             screen.confidence,

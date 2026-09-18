@@ -44,6 +44,35 @@
         <p id="run-note" class="muted"></p>
         <pre id="run-log" class="log"></pre>
         <div class="buy-heading-row">
+          <h3 class="buy-heading">Thời gian vòng shop</h3>
+          <span id="timing-head" class="muted timing-head"></span>
+        </div>
+        <div id="timing-panel" hidden>
+          <div id="timing-split" class="timing-split"></div>
+          <p id="timing-safety" class="timing-safety"></p>
+          <div class="timing-scroll">
+            <table class="timing-table">
+              <thead>
+                <tr>
+                  <th>Bước</th>
+                  <th>Trần</th>
+                  <th>Lần này</th>
+                  <th>TB</th>
+                  <th>Min–Max</th>
+                  <th>ADB</th>
+                  <th>Sleep</th>
+                  <th>CPU</th>
+                  <th>Ảnh</th>
+                  <th>Đụng trần</th>
+                  <th>N</th>
+                </tr>
+              </thead>
+              <tbody id="timing-log"></tbody>
+            </table>
+          </div>
+          <p id="timing-waits" class="timing-waits"></p>
+        </div>
+        <div class="buy-heading-row">
           <h3 class="buy-heading">Lịch sử mua</h3>
           <button id="btn-buy-reset" class="btn danger btn-compact" type="button">Xóa</button>
         </div>
@@ -247,8 +276,20 @@
             <input id="action_wait_s" name="action_wait_s" type="number" min="0" max="10" step="0.1" />
           </label>
           <label
-            >Chờ sau mua hàng — đợi server SOLD (giây)
+            >Chờ sau mua hàng — trần đợi SOLD (giây)
             <input id="buy_wait_s" name="buy_wait_s" type="number" min="0" max="10" step="0.1" />
+          </label>
+          <label
+            >Chờ vào shop / mở báo / về nhà — trần đợi màn hình (giây)
+            <input id="visit_wait_s" name="visit_wait_s" type="number" min="0" max="10" step="0.1" />
+          </label>
+          <label
+            >Nghỉ giữa hai lần chụp khi chờ (giây, 0 = chụp liên tục)
+            <input id="poll_interval_s" name="poll_interval_s" type="number" min="0" max="2" step="0.05" />
+          </label>
+          <label
+            >Swipe kéo sạp hàng (ms)
+            <input id="stall_swipe_ms" name="stall_swipe_ms" type="number" min="50" max="3000" />
           </label>
           <label
             >Swipe (ms)

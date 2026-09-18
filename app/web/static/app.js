@@ -130,6 +130,9 @@ function fillConfig(cfg) {
   $("loop_rest_min").value = cfg.loop_rest_min ?? 5;
   $("action_wait_s").value = cfg.action_wait_s ?? 0.9;
   $("buy_wait_s").value = cfg.buy_wait_s ?? 2;
+  $("visit_wait_s").value = cfg.visit_wait_s ?? 2.5;
+  $("poll_interval_s").value = cfg.poll_interval_s ?? 0;
+  $("stall_swipe_ms").value = cfg.stall_swipe_ms ?? 280;
   $("swipe_duration_ms").value = cfg.swipe_duration_ms;
   $("debug").checked = Boolean(cfg.debug);
   if ($("run-rest-min")) $("run-rest-min").value = cfg.loop_rest_min ?? 5;
@@ -298,11 +301,115 @@ function renderRun(run) {
   if (run.last_error) note.push(run.last_error);
   $("run-note").textContent = note.join(" · ");
   $("run-log").textContent = (run.logs || []).slice(-40).join("\n");
+  renderTiming(run.timing);
   if (run.has_frame) {
     $("live-frame").src = `/api/frame.png?t=${Date.now()}`;
     $("live-frame").hidden = false;
     $("live-empty").hidden = true;
   }
+}
+
+// Loop order, not alphabetical: the table reads like one shop visit.
+const TIMING_ORDER = [
+  "shop",
+  "find_column",
+  "open_newspaper",
+  "next_listing",
+  "visit_shop",
+  "buy_wishlist",
+  "find_slots",
+  "buy_one",
+  "stall_rewind",
+  "stall_pan",
+  "close_shop",
+  "go_home",
+];
+
+function secs(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n === 0) return "0";
+  return n < 10 ? n.toFixed(2).replace(/0$/, "") : n.toFixed(1);
+}
+
+function renderTiming(timing) {
+  const panel = $("timing-panel");
+  if (!panel) return;
+  const steps = (timing && timing.steps) || {};
+  const names = Object.keys(steps);
+  if (!names.length) {
+    panel.hidden = true;
+    $("timing-head").textContent = "chưa có số đo — chạy vòng báo";
+    return;
+  }
+  panel.hidden = false;
+  const head = [];
+  if (timing.shop_n) head.push(`shop #${timing.shop_n}`);
+  if (timing.per_shop_s) head.push(`${secs(timing.per_shop_s)}s/shop`);
+  head.push(`phiên ${secs(timing.session_s)}s`);
+  const shot = timing.shot || {};
+  if (shot.n) head.push(`${shot.n} ảnh · ${secs(shot.avg_s)}s/ảnh`);
+  if (timing.current) head.push(`đang: ${timing.current}`);
+  $("timing-head").textContent = head.join(" · ");
+
+  const split = timing.split_pct || {};
+  $("timing-split").innerHTML = ["adb", "sleep", "cpu"]
+    .map((key) => {
+      const pct = Number(split[key]) || 0;
+      const label = key === "adb" ? "ADB" : key === "sleep" ? "Chờ" : "CPU";
+      return `<span class="seg seg-${key}" style="width:${pct}%" title="${label} ${pct}%">${
+        pct >= 12 ? `${label} ${pct}%` : ""
+      }</span>`;
+    })
+    .join("");
+
+  const safety = timing.safety || {};
+  const risky = (safety.verify_fail || 0) + (safety.visit_fail || 0);
+  const safetyEl = $("timing-safety");
+  safetyEl.classList.toggle("warn", risky > 0);
+  safetyEl.textContent = [
+    `mua ${safety.buys || 0}`,
+    `verify fail ${safety.verify_fail || 0}`,
+    `bỏ qua ${safety.buy_skip || 0}`,
+    `vào shop lỗi ${safety.visit_fail || 0}`,
+    `đụng trần ${safety.deadline_hits || 0}`,
+  ].join(" · ");
+
+  const ordered = [
+    ...TIMING_ORDER.filter((name) => steps[name]),
+    ...names.filter((name) => !TIMING_ORDER.includes(name)),
+  ];
+  $("timing-log").innerHTML = ordered
+    .map((name) => {
+      const s = steps[name];
+      const cap = s.deadline_s;
+      const hit = (s.deadline_hits || 0) > 0;
+      // Finishing well inside the ceiling while still sleeping means the wait
+      // can come down; hitting the ceiling means it must go up.
+      const slack =
+        !hit && cap && s.avg_s < cap * 0.6 && s.sleep_s > 0.05;
+      const cls = hit ? "hot" : slack ? "slack" : "";
+      return `<tr class="${cls}">
+        <td class="step">${escapeHtml(name)}</td>
+        <td>${cap == null ? "—" : `${secs(cap)}s`}</td>
+        <td>${secs(s.last_s)}</td>
+        <td>${secs(s.avg_s)}</td>
+        <td>${secs(s.min_s)}–${secs(s.max_s)}</td>
+        <td>${secs(s.adb_s)}</td>
+        <td>${secs(s.sleep_s)}</td>
+        <td>${secs(s.cpu_s)}</td>
+        <td>${s.shots_avg ?? 0}</td>
+        <td>${s.deadline_hits || 0}</td>
+        <td>${s.n}</td>
+      </tr>`;
+    })
+    .join("");
+
+  const waits = timing.waits || {};
+  $("timing-waits").textContent = Object.keys(waits).length
+    ? `Cấu hình đang dùng — ${Object.entries(waits)
+        .map(([key, value]) => `${key} ${value}`)
+        .join(" · ")}`
+    : "";
 }
 
 function escapeHtml(value) {
@@ -981,6 +1088,9 @@ $("config-form").addEventListener("submit", async (ev) => {
         loop_rest_min: Number($("loop_rest_min").value),
         action_wait_s: Number($("action_wait_s").value),
         buy_wait_s: Number($("buy_wait_s").value),
+        visit_wait_s: Number($("visit_wait_s").value),
+        poll_interval_s: Number($("poll_interval_s").value),
+        stall_swipe_ms: Number($("stall_swipe_ms").value),
         swipe_duration_ms: Number($("swipe_duration_ms").value),
         debug: $("debug").checked,
       }),
