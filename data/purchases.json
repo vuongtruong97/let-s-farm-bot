@@ -1,26 +1,3 @@
 {
-  "purchases": [
-    {
-      "item": "pho_mai",
-      "at": "2026-09-18T15:49:30+07:00",
-      "kind": "buy",
-      "image": "buy_02"
-    },
-    {
-      "item": "pho_mai",
-      "at": "2026-09-18T15:49:30+07:00",
-      "kind": "match"
-    },
-    {
-      "item": "pho_mai",
-      "at": "2026-09-18T15:26:49+07:00",
-      "kind": "buy",
-      "image": "buy_01"
-    },
-    {
-      "item": "pho_mai",
-      "at": "2026-09-18T15:26:49+07:00",
-      "kind": "match"
-    }
-  ]
+  "purchases": []
 }

@@ -570,7 +570,7 @@ select {
   border-collapse: collapse;
   margin: 0;
   padding: 0;
-  max-height: 520px;
+  max-height: 1000px;
   overflow: auto;
   font-size: 12px;
   display: block;
@@ -606,7 +606,7 @@ select {
 }
 .buy-log tbody {
   display: block;
-  max-height: 500px;
+  max-height: 900px;
   overflow: auto;
 }
 .buy-log .item {
@@ -865,7 +865,7 @@ select {
     min-width: 0;
   }
   .row.wrap.pan > .btn.primary,
-  .row.wrap.pan > [data-pan="reset"] {
+  .row.wrap.pan > [data-pan='reset'] {
     grid-column: span 2;
   }
   #btn-start,
@@ -934,7 +934,7 @@ select {
   .lede {
     overflow-wrap: anywhere;
   }
-  .page[data-page="develop"] .row.wrap:not(.pan) > .btn {
+  .page[data-page='develop'] .row.wrap:not(.pan) > .btn {
     flex-basis: 100%;
   }
   .buy-log th:nth-child(1),

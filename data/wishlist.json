@@ -32,7 +32,7 @@
   "so_do": {
     "template": "item_so_do",
     "news_template": "item_so_do_news",
-    "enabled": true
+    "enabled": false
   },
   "bua_mo_rong_dat": {
     "template": "item_bua_mo_rong_dat",
@@ -89,11 +89,6 @@
     "news_template": "item_riu_news",
     "enabled": true
   },
-  "nuoc_ca_rot_ep": {
-    "template": "item_nuoc_ca_rot_ep",
-    "news_template": "item_nuoc_ca_rot_ep_news",
-    "enabled": false
-  },
   "bong_ngo_cay": {
     "template": "item_bong_ngo_cay",
     "news_template": "item_bong_ngo_cay_news",
@@ -137,6 +132,51 @@
   "bat_kem": {
     "template": "item_bat_kem",
     "news_template": "item_bat_kem_news",
+    "enabled": true
+  },
+  "mu_xanh": {
+    "template": "item_mu_xanh",
+    "news_template": "item_mu_xanh_news",
     "enabled": false
+  },
+  "tnt": {
+    "template": "item_tnt",
+    "news_template": "item_tnt_news",
+    "enabled": true
+  },
+  "ngo_cay": {
+    "template": "item_ngo_cay",
+    "news_template": "item_ngo_cay_news",
+    "enabled": false
+  },
+  "nuoc_ep_ca_rot": {
+    "template": "item_nuoc_ep_ca_rot",
+    "news_template": "item_nuoc_ep_ca_rot_news",
+    "enabled": false
+  },
+  "ao_len_xanh": {
+    "template": "item_ao_len_xanh",
+    "news_template": "item_ao_len_xanh_news",
+    "enabled": false
+  },
+  "muffin_ngo": {
+    "template": "item_muffin_ngo",
+    "news_template": "item_muffin_ngo_news",
+    "enabled": false
+  },
+  "hamburger": {
+    "template": "item_hamburger",
+    "news_template": "item_hamburger_news",
+    "enabled": false
+  },
+  "banh_bi_ngo": {
+    "template": "item_banh_bi_ngo",
+    "news_template": "item_banh_bi_ngo_news",
+    "enabled": false
+  },
+  "bang_dinh": {
+    "template": "item_bang_dinh",
+    "news_template": "item_bang_dinh_news",
+    "enabled": true
   }
 }
