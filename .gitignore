@@ -9,7 +9,7 @@ dist/
 build/
 data/config.json
 data/column.json
-data/macros/*.json
+data/run_prefs.json
 data/library/*.png
 data/buy_proofs/*.png
 screenshots/*.png

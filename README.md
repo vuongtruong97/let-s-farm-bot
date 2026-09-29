@@ -73,7 +73,11 @@ Mở **cột báo** (mailbox + tờ báo trên farm, không phải `hud_shop`). 
 python -m app.main web
 ```
 
-Mở http://127.0.0.1:48721 để **điều khiển bot** (thu hoạch / trồng / mua báo, chụp màn hình, pan camera), **test shop đang mở** (nhận diện & mua, hoặc crop icon vào wishlist), **ghi/phát macro**, crop icon wishlist, chỉnh cây trồng và ADB. Diamond luôn khoá. Dừng web rồi mở lại nếu đang chạy phiên cũ.
+Mở http://127.0.0.1:48721 để **điều khiển bot** (thu hoạch / trồng / mua báo, chụp màn hình, pan camera), **test shop đang mở** (nhận diện & mua, hoặc crop icon vào wishlist), crop icon wishlist, chỉnh cây trồng và ADB. Diamond luôn khoá. Dừng web rồi mở lại nếu đang chạy phiên cũ.
+
+**Xem trên điện thoại:** bấm nút **📱 Chia sẻ** trên đầu trang để lấy link LAN và mã QR (điện thoại phải cùng Wi-Fi). Web không có mật khẩu, ai trong cùng mạng mở link đều điều khiển được bot, nên chỉ dùng ở mạng tin cậy. Nếu điện thoại không vào được, cho phép Python qua Windows Firewall (mạng Private). Mã QR dùng thư viện `qrcode-generator` (MIT) đặt sẵn tại `app/web/static/qrcode.js`.
+
+Tuỳ chọn vòng lặp (hành vi, cây, limit, phút nghỉ) tự lưu vào `data/run_prefs.json`, nên tải lại trang hay mở từ điện thoại vẫn giữ nguyên. Khi đang nghỉ giữa vòng có nút **Chạy vòng mới ngay**.
 
 `item_wheat.png` chưa có: thêm từ web (crop icon lúa mì trong shop) hoặc copy vào `data/templates/`.
 
@@ -83,7 +87,7 @@ Mở http://127.0.0.1:48721 để **điều khiển bot** (thu hoạch / trồng
 - M1: ScreenDetector FARM/POPUP/UNKNOWN, template HUD, debug overlay
 - M2: FieldDetector EMPTY/GROWING/READY, harvest/plant + verify, CameraManager
 - Newspaper: NEWSPAPER / PLAYER_SHOP, FIND_COLUMN, visit ad, BUY wishlist, CLOSE_SHOP
-- Web UI: chạy/dừng bot, ghi/phát macro tap/swipe, config, wishlist item PNG, crops
+- Web UI: chạy/dừng bot, config, wishlist item PNG, crops
 
 ## Chưa làm (cố ý)
 
@@ -105,5 +109,4 @@ pytest -q
 - Vào nhà load chậm; hết tin trên trang thì swipe trang báo.
 - Chưa map world đầy đủ — chỉ pan zone.
 - Template HUD/field/báo gắn resolution hiện tại.
-- Macro gắn resolution và góc camera lúc ghi — zoom khác thì tap lệch, ghi lại cùng góc nhìn.
 - Package name game để trống trong config.

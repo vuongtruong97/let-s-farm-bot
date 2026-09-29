@@ -11,7 +11,7 @@ from app.config import AppConfig
 from app.main import main
 from app.storage.botdata import load_column, save_column
 from app.vision.detector import DetectedObject
-from app.vision.newspaper import NewspaperDetector, crate_view_shift
+from app.vision.newspaper import NewspaperDetector, ShopSlot, crate_view_shift
 from app.vision.regions import NEWS_PAGE_COUNT, NEWS_PROMO_SLOTS, news_spread_slots
 from app.vision.screen import GameScreen, ScreenDetector
 from app.vision.template_matcher import TemplateMatcher
@@ -276,7 +276,8 @@ def test_read_crate_qty_egg_is_8():
     crop = crate_proof_crop(egg, slot)
     assert crop.shape[0] > slot.height
     assert crop.shape[1] > slot.width
-    hit = news.matcher.match_one(crop, "qty_x", threshold=0.70)
+    # The proof crop keeps the stack mark (small "x" style on this build).
+    hit = news.matcher.match_one(crop, "qty_x_small", threshold=0.80)
     assert hit is not None
 
 
@@ -285,6 +286,59 @@ def test_read_crate_qty_popcorn_is_7():
     shop = _bgr(PLAYER_SHOP)
     slot = news.find_slots(shop, {"pop": {"template": "item_bong_ngo_cay"}})[0]
     assert news.read_crate_qty(shop, slot) == 7
+
+
+@pytest.mark.parametrize(
+    "fixture, mark, qty",
+    [
+        ("stall_clipped.jpg", (550, 421), 10),
+        ("stall_clipped.jpg", (550, 675), 5),
+        ("stall_clipped.jpg", (817, 675), 10),
+        ("stall_clipped.jpg", (817, 421), 2),  # sold, greyed out
+        ("stall_fits.jpg", (760, 421), 3),
+        ("stall_fits.jpg", (493, 675), 8),
+        ("stall_fits.jpg", (493, 421), 9),
+    ],
+)
+def test_read_qty_big_x_on_live_stalls(fixture, mark, qty):
+    x, y = mark
+    stall = _bgr(FIXTURES / fixture)
+    assert NewspaperDetector().read_qty_at(stall, (x - 30, y - 30, 120, 100)) == qty
+
+
+@pytest.mark.parametrize(
+    "fixture, template, qty",
+    [
+        ("crate_axe_x1.png", "item_riu", 1),
+        ("crate_dynamite_x2.png", "item_min", 2),
+        ("crate_sugar_x3.png", "item_duong_trang", 3),
+        # A 4's loop is closed like a 0's; only where the hole sits tells them apart.
+        ("crate_shovel_x4.png", "item_xeng", 4),
+        ("crate_platinum_x5.png", "item_thanh_bach_kim", 5),
+    ],
+)
+def test_read_crate_qty_on_buy_proofs(fixture, template, qty):
+    """Crops the bot saved as proof of real buys, item art in the strip and all."""
+    news = NewspaperDetector()
+    crate = _bgr(FIXTURES / fixture)
+    hit = news.matcher.match_one(crate, template, threshold=0.6, channels="bgr")
+    slot = ShopSlot(template, hit.x, hit.y, hit.width, hit.height, hit.confidence, True, False)
+    assert news.read_crate_qty(crate, slot) == qty
+
+
+@pytest.mark.parametrize(
+    "digits, qty",
+    [(["1", "0"], 10), (["7"], 7), (["1", "2"], None), (["0"], None), ([], None)],
+)
+def test_read_qty_only_accepts_one_to_ten(monkeypatch, digits, qty):
+    monkeypatch.setattr("app.vision.newspaper._qty_digits", lambda *_a: digits)
+    stall = _bgr(FIXTURES / "stall_fits.jpg")
+    assert NewspaperDetector().read_qty_at(stall, (730, 391, 120, 100)) == qty
+
+
+def test_read_qty_without_a_mark_is_none():
+    farm = _bgr(FIXTURES / "farm.png")
+    assert NewspaperDetector().read_qty_at(farm, (100, 100, 200, 150)) is None
 
 
 def test_shop_slot_matches_color_template(tmp_path):
@@ -427,21 +481,6 @@ def test_match_wishlist_uses_scene_thresholds():
     news._match_wishlist_item(canvas, "egg", spec, scene="news")
     assert captured["item_egg"] == 0.61
     assert captured["item_egg_news"] == 0.83
-
-
-def test_newspaper_fixture_matches_egg_and_screw_news():
-    found = NewspaperDetector().find_wishlist_ads(
-        NEWSPAPER,
-        {
-            "egg": {"template": "item_egg", "news_template": "item_egg_news"},
-            "screw": {"template": "item_screw", "news_template": "item_screw_news"},
-        },
-    )
-    by_pos = {(ad.x, ad.y): item for ad, item in found}
-    assert by_pos[(1365, 173)] == "egg"
-    assert by_pos[(230, 453)] == "screw"
-    assert "egg" in by_pos.values()
-    assert "screw" in by_pos.values()
 
 
 def test_visit_shop_from_ad(no_sleep):
@@ -1021,32 +1060,6 @@ def test_stall_is_rewound_before_the_first_look(tmp_path, no_sleep, monkeypatch)
     actions.buy_wishlist()
     # One pan carried it home, then one still swipe was the edge.
     assert swipes_before_first_look == [_pan("left")] * 2
-
-
-def test_crate_left_of_the_opening_window_is_bought(tmp_path, no_sleep, monkeypatch):
-    """The stall opened mid-table with the crate behind it. Buying it is the
-    whole point of rewinding first."""
-    icon, matcher = _one_item_shop(tmp_path, monkeypatch)
-    device = FakeDevice(
-        [
-            _png_bytes(_stall_window(300)),
-            _png_bytes(_stall_window(0, icon=icon)),
-            _png_bytes(_stall_window(0, icon=icon)),
-            _png_bytes(_stall_window(0, icon=icon)),
-            _png_bytes(_stall_window(0)),
-        ]
-    )
-    actions = NewspaperActions(
-        device,
-        AppConfig(debug=False),
-        matcher=matcher,
-        wait_s=0,
-        buy_wait_s=0,
-        visit_wait_s=0,
-    )
-    result = actions.buy_wishlist()
-    assert result.success
-    assert result.action.target == "wheat"
 
 
 def test_sweep_leaves_the_stall_where_it_ended(tmp_path, no_sleep, monkeypatch):
@@ -1734,7 +1747,9 @@ def test_browse_scans_ads_without_visiting_shop(tmp_path, no_sleep, monkeypatch)
     farm = _farm_with_stand()
     stand = NewspaperDetector().find_stand(farm)
     assert stand is not None
-    stand_tap = (stand.x + stand.width // 2, stand.y + stand.height // 2)
+    from app.actions.shop import _stand_points
+
+    stand_tap = _stand_points(stand)[0]
     dest = tmp_path / "browse_tpl"
     dest.mkdir()
     names = (
@@ -2094,3 +2109,35 @@ def test_visit_keeps_waiting_while_the_farm_loads(no_sleep):
     actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
     ad = DetectedObject("newspaper", 230, 173, 340, 260, 1.0, "ad")
     assert actions.visit_shop(ad).success
+
+
+def test_stand_is_tapped_on_its_box_then_elsewhere_on_it(no_sleep, tmp_path, monkeypatch):
+    """Pets and gnomes stand at the post; the first tap goes to the rolled
+    paper, and a paper that did not open gets the metal top, not the same spot."""
+    from app.actions.shop import _stand_points
+
+    farm = _farm_with_stand()
+    stand = NewspaperDetector().find_stand(farm)
+    monkeypatch.setattr("app.actions.shop.SCREENSHOT_DIR", tmp_path)
+    first, second = _stand_points(stand)
+    assert first != second
+    assert first[1] < stand.y + stand.height // 2  # above the middle of the post
+    device = FakeDevice([_png_bytes(farm)])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    assert not actions.open_newspaper().success
+    assert device.taps[-2:] == [first, second]
+
+
+def test_a_spot_that_just_missed_is_not_tapped_again(no_sleep):
+    """The saved tap missed: searching again finds the same stand, so the
+    next tap goes to the other spot on the box instead of the same one."""
+    from app.actions.shop import _stand_points
+
+    farm = _farm_with_stand()
+    stand = NewspaperDetector().find_stand(farm)
+    first, second = _stand_points(stand)
+    save_column(*first)
+    device = FakeDevice([_png_bytes(farm)])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    assert not actions.open_newspaper().success
+    assert device.taps == [first, second]

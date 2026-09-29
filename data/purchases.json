@@ -1,80 +1,82 @@
 {
   "purchases": [
     {
-      "item": "bat_kem",
-      "at": "2026-09-29T10:06:24+07:00",
+      "item": "xeng",
+      "at": "2026-09-30T00:01:19+07:00",
       "kind": "buy",
-      "image": "buy_07"
+      "image": "buy_07",
+      "qty": 1
     },
     {
-      "item": "bat_kem",
-      "at": "2026-09-29T10:06:24+07:00",
+      "item": "xeng",
+      "at": "2026-09-30T00:01:19+07:00",
       "kind": "match"
     },
     {
       "item": "siro",
-      "at": "2026-09-29T09:54:40+07:00",
+      "at": "2026-09-30T00:00:50+07:00",
       "kind": "buy",
-      "image": "buy_06"
+      "image": "buy_06",
+      "qty": 3
     },
     {
       "item": "siro",
-      "at": "2026-09-29T09:54:40+07:00",
-      "kind": "match"
-    },
-    {
-      "item": "pho_mai",
-      "at": "2026-09-29T09:54:40+07:00",
-      "kind": "buy",
-      "image": "buy_05"
-    },
-    {
-      "item": "pho_mai",
-      "at": "2026-09-29T09:54:40+07:00",
-      "kind": "match"
-    },
-    {
-      "item": "bat_kem",
-      "at": "2026-09-29T09:32:31+07:00",
-      "kind": "buy",
-      "image": "buy_04"
-    },
-    {
-      "item": "bat_kem",
-      "at": "2026-09-29T09:32:31+07:00",
-      "kind": "match"
-    },
-    {
-      "item": "pho_mai",
-      "at": "2026-09-29T09:32:31+07:00",
-      "kind": "buy",
-      "image": "buy_03"
-    },
-    {
-      "item": "pho_mai",
-      "at": "2026-09-29T09:32:31+07:00",
+      "at": "2026-09-30T00:00:50+07:00",
       "kind": "match"
     },
     {
       "item": "bo_sua",
-      "at": "2026-09-29T09:32:31+07:00",
+      "at": "2026-09-30T00:00:50+07:00",
       "kind": "buy",
-      "image": "buy_02"
+      "image": "buy_05",
+      "qty": 5
     },
     {
       "item": "bo_sua",
-      "at": "2026-09-29T09:32:31+07:00",
+      "at": "2026-09-30T00:00:50+07:00",
       "kind": "match"
     },
     {
-      "item": "pho_mai",
-      "at": "2026-09-29T09:28:03+07:00",
+      "item": "duong_trang",
+      "at": "2026-09-30T00:00:29+07:00",
       "kind": "buy",
-      "image": "buy_01"
+      "image": "buy_04",
+      "qty": 1
     },
     {
-      "item": "pho_mai",
-      "at": "2026-09-29T09:28:03+07:00",
+      "item": "duong_trang",
+      "at": "2026-09-30T00:00:29+07:00",
+      "kind": "match"
+    },
+    {
+      "item": "go_doi",
+      "at": "2026-09-29T23:58:50+07:00",
+      "kind": "buy",
+      "image": "buy_03",
+      "qty": 3
+    },
+    {
+      "item": "go_doi",
+      "at": "2026-09-29T23:58:50+07:00",
+      "kind": "match"
+    },
+    {
+      "item": "bat_kem",
+      "at": "2026-09-29T23:40:08+07:00",
+      "kind": "buy",
+      "image": "buy_02",
+      "qty": 2
+    },
+    {
+      "item": "bat_kem",
+      "at": "2026-09-29T23:40:08+07:00",
+      "kind": "buy",
+      "image": "buy_01",
+      "qty": 1
+    },
+    {
+      "item": "bat_kem",
+      "at": "2026-09-29T23:40:08+07:00",
       "kind": "match"
     }
   ]

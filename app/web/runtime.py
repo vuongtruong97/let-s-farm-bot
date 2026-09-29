@@ -9,16 +9,12 @@ from collections import deque
 
 from app.actions.farming import ActionResult, FarmingActions
 from app.actions.game import restart_game
-from app.actions.macro import play_macro
 from app.actions.shop import NewspaperActions
 from app.config import game_package, load_config
 from app.controller.camera import CameraManager
 from app.controller.adb import DeviceError
 from app.controller.device import DeviceController, frame_png_bytes
-from app.controller.recorder import GeteventListener, MacroRecorder
-from app.storage.botdata import clean_id
 from app.storage.logger import ActionFormatter, get_logger
-from app.storage.macros import save_macro
 from app.vision.screen import ScreenDetector
 
 log = get_logger("RUN")
@@ -35,7 +31,6 @@ JOBS = frozenset(
         "pan",
         "back",
         "home",
-        "macro",
         "buy_shop",
         "capture_shop",
         "capture_news",
@@ -63,7 +58,6 @@ NEWS_STEP_METHODS = {
     "capture_shop": "capture_open_shop",
     "capture_news": "capture_newspaper_ads",
 }
-QUICK_DURING_RECORD = frozenset({"screenshot", "connect", "detect", "pan", "back", "home"})
 MAX_LOGS = 80
 # An adb hiccup that outlives the device's own retries ends one loop round,
 # not the loop: wait, then start the round over from home. Only this many in a
@@ -96,6 +90,7 @@ class BotRuntime:
         self.loop_pause_s = loop_pause_s
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
+        self.skip_rest_event = threading.Event()
         self.device = None
         self.camera: CameraManager | None = None
         self.status = "idle"
@@ -104,13 +99,22 @@ class BotRuntime:
         self.screen: str | None = None
         self.last_error: str | None = None
         self.last_result: dict | None = None
+        # Wall clock (time.time()) so the page can show elapsed time and the
+        # rest countdown; the snapshot carries "now" to cancel clock skew.
+        self.started_at: float | None = None
+        self.finished_at: float | None = None
+        self.rounds = 0
+        self.phase: str | None = None
+        self.rest_until: float | None = None
+        self.rest_s: float | None = None
         # Whatever device.screenshot() returned; PNG bytes are made on demand.
         self.last_frame = None
         self._frame_png: bytes | None = None
+        # Bumped per screenshot so the page refetches the frame only when new.
+        self.frame_seq = 0
+        self.frame_at: float | None = None
         self.logs: deque[str] = deque(maxlen=MAX_LOGS)
-        self.recorder: MacroRecorder | None = None
         self._news = None
-        self._listener: GeteventListener | None = None
         self._hooked = False
         self._log_handler: logging.Handler | None = None
         self._attach_logs()
@@ -127,8 +131,16 @@ class BotRuntime:
                 "last_error": self.last_error,
                 "last_result": self.last_result,
                 "has_frame": self.last_frame is not None,
+                "frame_seq": self.frame_seq,
+                "frame_at": self.frame_at,
+                "started_at": self.started_at,
+                "finished_at": self.finished_at,
+                "rounds": self.rounds,
+                "phase": self.phase,
+                "rest_until": self.rest_until,
+                "rest_s": self.rest_s,
+                "now": time.time(),
                 "logs": list(self.logs),
-                "recording": self._recording_snap(),
                 "timing": self._timing_snap(),
             }
 
@@ -163,23 +175,23 @@ class BotRuntime:
             direction = str(payload.get("direction") or "")
             if direction not in {"left", "right", "up", "down", "reset"}:
                 raise ValueError("pan needs direction left/right/up/down/reset")
-        if job == "macro" and not str(payload.get("name") or "").strip():
-            raise ValueError("macro name required")
         if job in {"newspaper", "loop"}:
             _news_mode(payload)
         with self.lock:
             if self.status == "running":
                 raise BusyError("bot is running")
-            recording = self.status == "recording"
-            if recording and job not in QUICK_DURING_RECORD:
-                raise BusyError("bot is recording")
-            if not recording:
-                self.stop_event.clear()
-                self.status = "running"
-                self.job = job
-                self.last_error = None
-        target = self._quick_worker if recording else self._worker
-        threading.Thread(target=target, args=(job, payload), daemon=True).start()
+            self.stop_event.clear()
+            self.skip_rest_event.clear()
+            self.status = "running"
+            self.job = job
+            self.last_error = None
+            self.started_at = time.time()
+            self.finished_at = None
+            self.rounds = 0
+            self.phase = None
+            self.rest_until = None
+            self.rest_s = None
+        threading.Thread(target=self._worker, args=(job, payload), daemon=True).start()
         return self.snapshot()
 
     def stop(self) -> dict:
@@ -187,137 +199,14 @@ class BotRuntime:
         log.info("stop requested")
         return self.snapshot()
 
-    def start_record(self, name: str) -> dict:
-        key = clean_id(name)
+    def skip_rest(self) -> dict:
+        """End the rest between loop rounds now; the next round starts at once."""
         with self.lock:
-            if self.status == "running":
-                raise BusyError("bot is running")
-            if self.status == "recording":
-                raise BusyError("already recording")
-            self.status = "recording"
-            self.job = "record"
-            self.last_error = None
-        try:
-            self._ensure_device()
-            width, height = self.device.resolution()
-            recorder = MacroRecorder(key, width, height)
-            with self.lock:
-                self.recorder = recorder
-            try:
-                self.device.screenshot()
-            except Exception:
-                pass
-            self._start_getevent(width, height)
-        except Exception as exc:
-            self._stop_getevent()
-            with self.lock:
-                self.recorder = None
-                self.status = "error"
-                self.job = None
-                self.last_error = str(exc)
-            raise
-        log.info(f"RECORD start {key} {width}x{height}")
+            resting = self.rest_until is not None
+        if resting:
+            self.skip_rest_event.set()
+            log.info("LOOP rest skipped from the web")
         return self.snapshot()
-
-    def stop_record(self) -> dict:
-        self._stop_getevent()
-        rec = self.recorder
-        saved = None
-        if rec is not None:
-            saved = save_macro(rec.to_macro())
-            log.info(f"RECORD stop {rec.name} steps={len(rec.steps)} -> {saved}")
-        with self.lock:
-            self.recorder = None
-            if self.status == "recording":
-                self.status = "idle"
-            self.job = None
-        return self.snapshot()
-
-    def apply_gesture(self, payload: dict) -> dict:
-        kind = str(payload.get("type") or "").strip().lower()
-        self._ensure_device()
-        step = _gesture_step(kind, payload)
-        if kind == "tap":
-            self.device.tap(step["x"], step["y"])
-        elif kind == "swipe":
-            self.device.swipe(
-                step["x1"], step["y1"], step["x2"], step["y2"], step["duration_ms"]
-            )
-        elif kind == "back":
-            self.device.back()
-        elif kind == "home":
-            self.device.home()
-        rec = self.recorder
-        if rec is not None and self.status == "recording":
-            rec.add_web_step(step)
-        try:
-            self.device.screenshot()
-        except Exception:
-            pass
-        return self.snapshot()
-
-    def record_set_wait(self, index: int, ms: int) -> dict:
-        rec = self.recorder
-        if rec is None:
-            raise ValueError("not recording")
-        rec.set_wait_ms(index, ms)
-        return self.snapshot()
-
-    def record_remove_step(self, index: int) -> dict:
-        rec = self.recorder
-        if rec is None:
-            raise ValueError("not recording")
-        rec.remove_step(index)
-        return self.snapshot()
-
-    def _recording_snap(self) -> dict | None:
-        rec = self.recorder
-        if rec is None and self.status != "recording":
-            return None
-        if rec is None:
-            return {"active": True, "name": "", "width": 0, "height": 0, "steps": []}
-        return {
-            "active": self.status == "recording",
-            "name": rec.name,
-            "width": rec.width,
-            "height": rec.height,
-            "steps": rec.snapshot_steps(),
-        }
-
-    def _start_getevent(self, width: int, height: int) -> None:
-        serial = self.serial or getattr(self.device, "serial", "")
-        if not serial:
-            return
-        adb = getattr(self.device, "adb", None)
-        if adb is None:
-            return
-        adb_bin = getattr(adb, "adb_bin", None) or load_config().adb_bin or "adb"
-        try:
-            listener = GeteventListener(adb_bin, serial, width, height)
-            listener.start(self._on_getevent)
-            self._listener = listener
-        except Exception as exc:
-            log.info(f"getevent skip {exc}")
-
-    def _stop_getevent(self) -> None:
-        listener = self._listener
-        self._listener = None
-        if listener is not None:
-            try:
-                listener.stop()
-            except Exception:
-                pass
-
-    def _on_getevent(self, step: dict) -> None:
-        rec = self.recorder
-        if rec is None or self.status != "recording":
-            return
-        rec.add_getevent_step(step)
-        try:
-            if self.device is not None:
-                self.device.screenshot()
-        except Exception:
-            pass
 
     def _stopped(self) -> bool:
         return self.stop_event.is_set()
@@ -332,20 +221,24 @@ class BotRuntime:
                 self.last_error = str(exc)
                 self.status = "error"
                 self.job = job
+                self._end_run()
             return
         with self.lock:
             if self.status == "running":
                 self.status = "idle"
             self.job = None
+            self._end_run()
 
-    def _quick_worker(self, job: str, payload: dict) -> None:
-        try:
-            self._ensure_device()
-            self._dispatch(job, payload)
-        except Exception as exc:
-            log.info(f"job {job} FAIL {exc}")
-            with self.lock:
-                self.last_error = str(exc)
+    def _end_run(self) -> None:
+        # Caller holds the lock.
+        self.finished_at = time.time()
+        self.phase = None
+        self.rest_until = None
+        self.rest_s = None
+
+    def _set_phase(self, phase: str | None) -> None:
+        with self.lock:
+            self.phase = phase
 
     def _dispatch(self, job: str, payload: dict) -> None:
         if job == "connect":
@@ -371,16 +264,10 @@ class BotRuntime:
             self._newspaper(_limit(payload), _news_mode(payload))
         elif job == "loop":
             self._loop(payload)
-        elif job == "macro":
-            self._macro(str(payload.get("name") or ""))
         elif job == "restart_game":
             self._restart_game()
         elif job in NEWS_STEP_METHODS:
             self._news_step(job, payload)
-
-    def _macro(self, name: str) -> None:
-        result = play_macro(self.device, name, should_stop=self._stopped)
-        self._store_action(result)
 
     def _newspaper_actor(self):
         cfg = load_config()
@@ -463,6 +350,8 @@ class BotRuntime:
             with self.lock:
                 self.last_frame = png
                 self._frame_png = None
+                self.frame_seq += 1
+                self.frame_at = time.time()
             return png
 
         self.device.screenshot = hooked
@@ -584,9 +473,11 @@ class BotRuntime:
     ) -> str:
         """One pass of the loop: "ok", "stuck" (the farm never came back) or
         "stop"."""
+        self._set_phase("home")
         if not self._ensure_home():
             return "stop" if self._stopped() else "stuck"
         if harvest:
+            self._set_phase("harvest")
             result = self._farming_actor().harvest_ready_fields(
                 limit=limit, should_stop=self._stopped
             )
@@ -594,6 +485,7 @@ class BotRuntime:
         if self._stopped():
             return "stop"
         if plant:
+            self._set_phase("plant")
             result = self._farming_actor().plant_empty_fields(
                 crop=crop, limit=limit, should_stop=self._stopped
             )
@@ -601,9 +493,11 @@ class BotRuntime:
         if self._stopped():
             return "stop"
         if newspaper:
+            self._set_phase("newspaper")
             result = self._newspaper(limit, news_mode, reset_home=False, until_done=True)
             if self._stopped():
                 return "stop"
+            self._round_done()
             if _newspaper_cycle_done(result):
                 self._rest_minutes(rest_min)
             else:
@@ -613,9 +507,16 @@ class BotRuntime:
                 )
                 if self.loop_pause_s:
                     time.sleep(self.loop_pause_s)
-        elif self.loop_pause_s:
-            time.sleep(self.loop_pause_s)
+        else:
+            self._round_done()
+            if self.loop_pause_s:
+                time.sleep(self.loop_pause_s)
         return "ok"
+
+    def _round_done(self) -> None:
+        with self.lock:
+            self.rounds += 1
+            self.phase = None
 
     def _game_not_in_front(self) -> str | None:
         """Why the game needs restarting before this round, or None.
@@ -671,9 +572,25 @@ class BotRuntime:
             return
         log.info(f"LOOP rest {minutes:g} min")
         self._set_result(True, "REST", f"{minutes:g} min")
+        self.skip_rest_event.clear()
+        with self.lock:
+            self.phase = "rest"
+            self.rest_until = time.time() + seconds
+            self.rest_s = seconds
         end = time.monotonic() + seconds
-        while time.monotonic() < end and not self._stopped():
-            time.sleep(min(1.0, end - time.monotonic()))
+        try:
+            while (
+                time.monotonic() < end
+                and not self._stopped()
+                and not self.skip_rest_event.is_set()
+            ):
+                time.sleep(max(0.0, min(1.0, end - time.monotonic())))
+        finally:
+            self.skip_rest_event.clear()
+            with self.lock:
+                self.phase = None
+                self.rest_until = None
+                self.rest_s = None
 
     def _store_action(self, result: ActionResult) -> None:
         with self.lock:
@@ -761,23 +678,6 @@ def _newspaper_cycle_done(result: ActionResult) -> bool:
     if result.action.type == "VISIT_SHOP" and result.action.target == "done":
         return True
     return result.error == "all shops done"
-
-
-def _gesture_step(kind: str, payload: dict) -> dict:
-    if kind == "tap":
-        return {"type": "tap", "x": int(payload.get("x") or 0), "y": int(payload.get("y") or 0)}
-    if kind == "swipe":
-        return {
-            "type": "swipe",
-            "x1": int(payload.get("x1") or 0),
-            "y1": int(payload.get("y1") or 0),
-            "x2": int(payload.get("x2") or 0),
-            "y2": int(payload.get("y2") or 0),
-            "duration_ms": max(80, int(payload.get("duration_ms") or 320)),
-        }
-    if kind in {"back", "home"}:
-        return {"type": kind}
-    raise ValueError(f"unknown gesture '{kind}'")
 
 
 RUNTIME = BotRuntime()

@@ -72,8 +72,21 @@ QTY_PAD_RIGHT = 0.45
 QTY_PAD_DOWN = 0.35
 PROOF_PAD_RIGHT = 1.15
 PROOF_PAD_DOWN = 1.05
-QTY_X_THRESHOLD = 0.70
+# The game has drawn a crate's stack size two ways: a big "×" as tall as the
+# digits (current), and a small lowercase "x" before taller digits (older
+# builds, the egg and popcorn fixtures). Both crops keep 3px of rim around the
+# mark; true marks score 0.93-1.0, bare crate wood under 0.6.
+QTY_X_TEMPLATES = ("qty_x", "qty_x_small")
+QTY_X_THRESHOLD = 0.80
 QTY_SCALES = (0.7, 0.85, 1.0, 1.15, 1.3, 1.5)
+# A crate never holds more than 10, so the reading is one digit or "10".
+MAX_CRATE_QTY = 10
+# Digits sit on the mark's baseline, within this many mark widths to its right
+# ("10" after the big "×" ends ~2.2 widths in).
+QTY_STRIP_WIDTHS = 3.4
+# Height over width of a digit's white fill: 1.25-1.88 measured. Item art that
+# pokes into the strip (egg, sugar) is wide, 0.4-0.9.
+QTY_MIN_ASPECT = 1.05
 # cv2.matchTemplate releases the GIL, so one wishlist item per thread cuts a
 # 15-item stall scan from ~0.9s to ~0.2s. Results are collected in wishlist
 # order, so the outcome is the same as a sequential scan.
@@ -348,36 +361,41 @@ class NewspaperDetector:
         return match_to_object(hit) if hit else None
 
     def read_crate_qty(self, source, slot: ShopSlot) -> int | None:
-        """Stack size painted as xN on the crate rim. None if unread."""
-        if "qty_x" not in self.matcher.names:
-            return None
+        """Stack size painted as ×N on the crate rim. None if unread."""
         image = source if isinstance(source, np.ndarray) else as_bgr(source)
         box = qty_roi_box(slot, image.shape)
         if box is None:
             return None
+        return self.read_qty_at(image, box)
+
+    def read_qty_at(self, source, box: tuple[int, int, int, int]) -> int | None:
+        """Stack size whose ×/x mark lies inside box (x, y, w, h). None if unread."""
+        image = source if isinstance(source, np.ndarray) else as_bgr(source)
         x, y, w, h = box
-        roi = image[y : y + h, x : x + w]
-        hit = self.matcher.match_one(
-            roi, "qty_x", threshold=QTY_X_THRESHOLD, scales=QTY_SCALES
+        roi = image[max(0, y) : y + h, max(0, x) : x + w]
+        hits = [
+            hit
+            for name in QTY_X_TEMPLATES
+            if name in self.matcher.names
+            and (
+                hit := self.matcher.match_one(
+                    roi, name, threshold=QTY_X_THRESHOLD, scales=QTY_SCALES
+                )
+            )
+        ]
+        if not hits:
+            return None
+        hit = max(hits, key=lambda found: found.confidence)
+        # Read the digits off the whole frame: after a narrow item's mark,
+        # "10" runs past the right edge of the search box.
+        digits = _qty_digits(
+            image, max(0, x) + hit.x, max(0, y) + hit.y, hit.width, hit.height
         )
-        if hit is None:
+        text = "".join(digits)
+        if not text or text.startswith("0"):
             return None
-        sx = hit.x + int(hit.width * 0.72)
-        sy1 = max(0, hit.y - 2)
-        sy2 = min(roi.shape[0], hit.y + hit.height + 2)
-        if sx >= roi.shape[1] or sy2 <= sy1:
-            return None
-        strip = roi[sy1:sy2, sx:]
-        digits = _qty_digits(strip, hit.height, hit.width)
-        if not digits:
-            return None
-        try:
-            qty = int("".join(digits))
-        except ValueError:
-            return None
-        if 1 <= qty <= 999:
-            return qty
-        return None
+        qty = int(text)
+        return qty if 1 <= qty <= MAX_CRATE_QTY else None
 
     def _match(self, source, name: str) -> TemplateMatch | None:
         image = source if isinstance(source, np.ndarray) else as_bgr(source)
@@ -465,63 +483,87 @@ def _qty_hole_cy(bin_img: np.ndarray) -> float:
 
 
 def _classify_qty_digit(bin_img: np.ndarray) -> str | None:
+    """One stack-size digit from its white fill.
+
+    Each threshold sits between the values measured on real crates (both mark
+    styles; noted per rule). 6 has not been seen on a crate yet, so its rule
+    is the font's shape, not a measurement.
+    """
     h, w = bin_img.shape[:2]
-    ink = (bin_img > 0).astype(np.float32)
+    ink = bin_img > 0
     if ink.mean() < 0.05:
         return None
+
+    def zone(row: int, col: int) -> float:
+        cell = ink[row * h // 3 : (row + 1) * h // 3, col * w // 3 : (col + 1) * w // 3]
+        return float(cell.mean()) if cell.size else 0.0
+
     holes = _qty_holes(bin_img)
-    aspect = h / max(w, 1)
-    top, mid, bot = (
-        float(ink[: h // 3].mean()),
-        float(ink[h // 3 : 2 * h // 3].mean()),
-        float(ink[2 * h // 3 :].mean()),
-    )
-    fill = float(ink.mean())
-    right = float(ink[:, w // 2 :].mean())
-    left = float(ink[:, : w // 2].mean())
     if holes >= 2:
         return "8"
     if holes == 1:
-        if fill >= 0.58:
-            return "8"
-        cy = _qty_hole_cy(bin_img)
-        if cy < 0.40:
-            return "9"
-        if cy > 0.60:
-            return "6"
-        if aspect > 1.35:
+        # Only 0's hole sits in the middle cell (0.23-0.25 ink there); the
+        # others' holes are small and high or low, so it reads full (4: 0.87,
+        # 9: 0.77). Hole height alone can not split 0 (0.50) from 4 (0.46).
+        if zone(1, 1) < 0.5:
+            return "0"
+        # 4's diagonal leaves its top-left corner open (0.16); 9's bowl fills
+        # it (0.59).
+        if zone(0, 0) < 0.35:
             return "4"
-        return "0"
-    if aspect > 2.05:
+        if _qty_hole_cy(bin_img) < 0.5:  # 9: 0.35
+            return "9"
+        return "6"
+    if h / max(w, 1) >= 1.65:  # 1: 1.81-1.88; every other digit <= 1.48
         return "1"
-    if top > bot * 1.08 and top >= mid:
+    if zone(2, 0) < 0.4 and zone(2, 2) < 0.4:  # 7 ends in one centre stroke
         return "7"
-    if bot > top and right > left:
-        return "2"
-    if right > left * 1.08:
+    mid_left = zone(1, 0)
+    if mid_left >= 0.45:  # 5: 0.57 (its upright)
+        return "5"
+    if mid_left < 0.17:  # 3: 0.07-0.09
         return "3"
-    return "5"
+    return "2"  # 2: 0.25-0.30
 
 
-def _qty_digits(strip: np.ndarray, x_h: int, x_w: int) -> list[str]:
-    if strip.size == 0:
+def _qty_digits(image: np.ndarray, mx: int, my: int, mw: int, mh: int) -> list[str]:
+    """Digits standing on the baseline of the ×/x mark at (mx, my, mw, mh),
+    left to right. [] when anything in the run is unreadable."""
+    ih, iw = image.shape[:2]
+    x1, x2 = max(0, mx), min(iw, mx + int(mw * QTY_STRIP_WIDTHS))
+    # The small "x" is shorter than its digits, so look above the mark too.
+    y1, y2 = max(0, my - mh), min(ih, my + int(mh * 1.3))
+    if x2 - x1 < 8 or y2 - y1 < 8:
         return []
-    mask = _qty_white_mask(strip)
-    _n, _labels, stats, _cents = cv2.connectedComponentsWithStats(mask, 8)
-    min_h = max(10, int(x_h * 0.35))
-    glyphs: list[tuple[int, np.ndarray]] = []
+    mask = _qty_white_mask(image[y1:y2, x1:x2])
+    _n, labels, stats, _cents = cv2.connectedComponentsWithStats(mask, 8)
+    baseline = my + mh - y1
+    glyphs: list[tuple[int, int]] = []
     for i in range(1, stats.shape[0]):
         gx, gy, gw, gh, area = (int(v) for v in stats[i])
-        if gh < min_h or area < 40 or gw > int(x_w * 1.6):
+        if gx + gw / 2 < mw * 0.85:  # the mark itself
             continue
-        glyphs.append((gx, mask[gy : gy + gh, gx : gx + gw]))
-    glyphs.sort(key=lambda item: item[0])
+        if abs(gy + gh - baseline) > mh * 0.3:  # not on the mark's line
+            continue
+        if not mh * 0.6 <= gh <= mh * 2.2 or area < 40 or gh < gw * QTY_MIN_ASPECT:
+            continue
+        glyphs.append((gx, i))
+    glyphs.sort()
     digits: list[str] = []
-    for _gx, crop in glyphs:
-        digit = _classify_qty_digit(crop)
+    edge = mw
+    for gx, i in glyphs:
+        # Digits follow each other closely; past a wide gap is crate or art.
+        if gx - edge > mw * 0.6:
+            break
+        if len(digits) == 2:
+            return []  # three glyphs in a row is no stack size
+        gy, gw, gh = (int(v) for v in stats[i][1:4])
+        glyph = (labels[gy : gy + gh, gx : gx + gw] == i).astype(np.uint8) * 255
+        digit = _classify_qty_digit(glyph)
         if digit is None:
             return []
         digits.append(digit)
+        edge = gx + gw
     return digits
 
 

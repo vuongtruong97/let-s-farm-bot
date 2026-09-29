@@ -72,12 +72,12 @@
   "van_go": {
     "template": "item_van_go",
     "news_template": "item_van_go_news",
-    "enabled": true
+    "enabled": false
   },
   "pho_mai": {
     "template": "item_pho_mai",
     "news_template": "item_pho_mai_news",
-    "enabled": true
+    "enabled": false
   },
   "xeng": {
     "template": "item_xeng",

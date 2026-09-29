@@ -5,13 +5,9 @@ const PAGE_META = {
     title: "Điều khiển bot",
     lede: "Chọn hành vi rồi Bắt đầu. Diamond luôn khoá.",
   },
-  macro: {
-    title: "Macro",
-    lede: "Ghi tap/swipe trên ảnh live hoặc máy ảo, rồi phát lại toạ độ tuyệt đối.",
-  },
   wishlist: {
     title: "Wishlist",
-    lede: "Hai crop mỗi item: shop có màu, báo màu in. Chọn từ thư viện hoặc tải lên.",
+    lede: "Hai crop mỗi item: shop có màu, báo màu in. Bấm vào item để sửa hoặc xoá.",
   },
   library: {
     title: "Thư viện",
@@ -34,12 +30,11 @@ const PAGE_META = {
     lede: "Từng bước mua hàng trên báo, chụp màn, nhận diện, camera. Overlay debug nằm trong Cấu hình.",
   },
 };
-const LIVE_PAGES = new Set(["control", "macro", "develop"]);
+const LIVE_PAGES = new Set(["control", "develop"]);
 const PATH_TO_PAGE = {
   "/": "control",
   "/control": "control",
   "/index.html": "control",
-  "/macro": "macro",
   "/wishlist": "wishlist",
   "/library": "library",
   "/crops": "crops",
@@ -49,6 +44,8 @@ const PATH_TO_PAGE = {
   "/develop": "develop",
 };
 
+let currentPage = "control";
+
 function pageFromPath(pathname) {
   const path = (pathname || "/").replace(/\/$/, "") || "/";
   return PATH_TO_PAGE[path] || "control";
@@ -56,6 +53,7 @@ function pageFromPath(pathname) {
 
 function showPage(name, push) {
   if (!PAGE_META[name]) name = "control";
+  currentPage = name;
   document.body.dataset.page = name;
   document.body.classList.toggle("has-live", LIVE_PAGES.has(name));
   document.querySelectorAll(".page").forEach((el) => {
@@ -69,12 +67,13 @@ function showPage(name, push) {
   });
   $("page-title").textContent = PAGE_META[name].title;
   $("page-lede").textContent = PAGE_META[name].lede;
-  document.title = `Hay Day Bot — ${PAGE_META[name].title}`;
+  updateTitle();
   if (push) {
     const link = document.querySelector(`[data-nav="${name}"]`);
     const href = (link && link.getAttribute("href")) || "/control";
     if (location.pathname !== href) history.pushState({ page: name }, "", href);
   }
+  if (name === "wishlist") renderWishlist();
 }
 
 document.querySelector(".nav").addEventListener("click", (ev) => {
@@ -84,13 +83,65 @@ document.querySelector(".nav").addEventListener("click", (ev) => {
   showPage(link.dataset.nav, true);
 });
 window.addEventListener("popstate", () => showPage(pageFromPath(location.pathname), false));
-showPage(pageFromPath(location.pathname), false);
+
+// Per-browser view choices only (filters, folds). Bot settings live on the server.
+function localGet(key, fallback) {
+  try {
+    const raw = localStorage.getItem(`farmbot.${key}`);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch (err) {
+    return fallback;
+  }
+}
+
+function localSet(key, value) {
+  try {
+    localStorage.setItem(`farmbot.${key}`, JSON.stringify(value));
+  } catch (err) {
+    /* private mode: the choice just is not remembered */
+  }
+}
 
 function toast(message, err = false) {
-  const el = $("toast");
-  el.hidden = !message;
-  el.textContent = message || "";
-  el.classList.toggle("err", Boolean(err));
+  if (!message) return;
+  const box = $("toasts");
+  const el = document.createElement("div");
+  el.className = `toast${err ? " err" : ""}`;
+  el.setAttribute("role", err ? "alert" : "status");
+  const text = document.createElement("span");
+  text.textContent = message;
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "toast-x";
+  close.setAttribute("aria-label", "Đóng");
+  close.textContent = "×";
+  el.append(text, close);
+  let gone = false;
+  const dismiss = () => {
+    if (gone) return;
+    gone = true;
+    el.classList.add("out");
+    setTimeout(() => el.remove(), 200);
+  };
+  close.addEventListener("click", dismiss);
+  box.appendChild(el);
+  while (box.children.length > 4) box.firstElementChild.remove();
+  setTimeout(dismiss, err ? 8000 : 3500);
+}
+
+function confirmDialog({ title = "Xác nhận", message = "", ok = "Xoá", danger = true } = {}) {
+  const dlg = $("confirm-modal");
+  $("confirm-title").textContent = title;
+  $("confirm-message").textContent = message;
+  const okBtn = $("confirm-ok");
+  okBtn.textContent = ok;
+  okBtn.className = danger ? "btn danger solid" : "btn primary";
+  dlg.returnValue = "";
+  return new Promise((resolve) => {
+    dlg.addEventListener("close", () => resolve(dlg.returnValue === "ok"), { once: true });
+    // Focus lands on Huỷ (first button): Enter alone never deletes.
+    dlg.showModal();
+  });
 }
 
 async function api(url, options) {
@@ -105,7 +156,9 @@ async function api(url, options) {
     throw new Error("Web API cũ hoặc không phải JSON — tắt tab cũ, mở lại đúng cổng");
   }
   if (!res.ok) {
-    throw new Error(data.error || res.statusText);
+    const error = new Error(data.error === "bot is running" ? "Bot đang chạy — bấm Dừng trước" : data.error || res.statusText);
+    error.status = res.status;
+    throw error;
   }
   return data;
 }
@@ -119,7 +172,69 @@ function fileToDataUrl(file) {
   });
 }
 
-function fillConfig(cfg) {
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// ---------------------------------------------------------------- time
+
+// Server wall clock minus ours: a phone with a drifting clock still counts the
+// rest down to the second the server will end it.
+let clockOffset = 0;
+
+function serverNow() {
+  return Date.now() + clockOffset;
+}
+
+function ts(iso) {
+  const t = Date.parse(iso || "");
+  return Number.isFinite(t) ? t : 0;
+}
+
+function relTime(ms) {
+  if (!ms) return "";
+  const s = Math.max(0, Math.round((serverNow() - ms) / 1000));
+  if (s < 45) return "vừa xong";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} phút trước`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} giờ trước`;
+  return `${Math.round(h / 24)} ngày trước`;
+}
+
+function fmtDuration(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+function formatBuyTime(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso || "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
+}
+
+// ---------------------------------------------------------------- config
+
+let configDirty = false;
+
+function setConfigDirty(on) {
+  configDirty = on;
+  $("config-dirty").hidden = !on;
+  $("config-reset").disabled = !on;
+}
+
+// A refresh after some other action must not wipe half-typed settings.
+function fillConfig(cfg, force = false) {
+  if (!cfg || (configDirty && !force)) return;
   $("adb_host").value = cfg.adb_host || "";
   $("adb_port").value = cfg.adb_port ?? "";
   $("adb_bin").value = cfg.adb_bin || "";
@@ -127,7 +242,6 @@ function fillConfig(cfg) {
   $("template_threshold").value = cfg.template_threshold;
   $("buy_threshold").value = cfg.buy_threshold ?? 0.72;
   $("news_threshold").value = cfg.news_threshold ?? 0.72;
-  $("loop_rest_min").value = cfg.loop_rest_min ?? 5;
   $("action_wait_s").value = cfg.action_wait_s ?? 0.9;
   $("buy_wait_s").value = cfg.buy_wait_s ?? 2;
   $("visit_wait_s").value = cfg.visit_wait_s ?? 2.5;
@@ -135,62 +249,168 @@ function fillConfig(cfg) {
   $("stall_swipe_ms").value = cfg.stall_swipe_ms ?? 280;
   $("swipe_duration_ms").value = cfg.swipe_duration_ms;
   $("debug").checked = Boolean(cfg.debug);
-  if ($("run-rest-min")) $("run-rest-min").value = cfg.loop_rest_min ?? 5;
+  setConfigDirty(false);
+}
+
+$("config-form").addEventListener("input", () => setConfigDirty(true));
+$("config-form").addEventListener("change", () => setConfigDirty(true));
+$("config-reset").addEventListener("click", () => fillConfig(lastState.config, true));
+
+// ---------------------------------------------------------------- run prefs
+
+let prefsTimer = 0;
+let prefsPending = false;
+
+function currentPrefs() {
+  const limit = Number($("run-limit").value);
+  const rest = $("run-rest-min").value;
+  return {
+    harvest: $("bh").checked,
+    plant: $("bp").checked,
+    newspaper: $("bn").checked,
+    news_mode: $("news-mode").value,
+    crop: $("run-crop").value || "wheat",
+    limit: Number.isFinite(limit) && limit > 0 ? limit : 1,
+    loop_rest_min: rest === "" ? undefined : Number(rest),
+  };
+}
+
+function fillCropOptions(crops, selected) {
+  const sel = $("run-crop");
+  const keep = selected || sel.value;
+  const ids = (crops || []).map((crop) => crop.id);
+  if (keep && !ids.includes(keep)) ids.push(keep);
+  if (!ids.length) ids.push("wheat");
+  sel.innerHTML = ids.map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join("");
+  sel.value = ids.includes(keep) ? keep : ids[0];
+}
+
+function syncPrefsUi() {
+  $("run-crop").disabled = !$("bp").checked;
+  $("news-mode").disabled = !$("bn").checked;
+  // Rest only happens once every shop on the paper was visited.
+  $("run-rest-min").disabled = !$("bn").checked;
+}
+
+function fillRunPrefs(prefs) {
+  if (!prefs || prefsPending) return;
+  $("bh").checked = Boolean(prefs.harvest);
+  $("bp").checked = Boolean(prefs.plant);
+  $("bn").checked = Boolean(prefs.newspaper);
+  $("news-mode").value = prefs.news_mode || "sweep";
+  fillCropOptions(lastState.crops, prefs.crop);
+  const focused = document.activeElement;
+  if (focused !== $("run-limit")) $("run-limit").value = prefs.limit;
+  if (focused !== $("run-rest-min")) $("run-rest-min").value = prefs.loop_rest_min;
+  syncPrefsUi();
+}
+
+function queuePrefsSave() {
+  prefsPending = true;
+  syncPrefsUi();
+  $("prefs-status").textContent = "Đang lưu…";
+  clearTimeout(prefsTimer);
+  prefsTimer = setTimeout(savePrefs, 400);
+}
+
+async function savePrefs() {
+  clearTimeout(prefsTimer);
+  if (!prefsPending) return;
+  try {
+    const res = await api("/api/run-prefs", { method: "PUT", body: JSON.stringify(currentPrefs()) });
+    lastState.run_prefs = res.run_prefs;
+    prefsPending = false;
+    fillRunPrefs(res.run_prefs);
+    $("prefs-status").textContent = "Đã lưu ✓";
+  } catch (err) {
+    prefsPending = false;
+    $("prefs-status").textContent = "";
+    toast(`Không lưu được tuỳ chọn: ${err.message}`, true);
+  }
+}
+
+$("run-prefs").addEventListener("change", queuePrefsSave);
+$("run-prefs").addEventListener("input", (ev) => {
+  if (ev.target.type === "number") queuePrefsSave();
+});
+
+// ---------------------------------------------------------------- cards
+
+// Bumped only when item images may have changed, so re-rendering the grid
+// reuses the images already loaded instead of refetching all of them.
+let imgVersion = Date.now();
+
+function templateUrl(name) {
+  return `/api/templates/${encodeURIComponent(name)}.png?v=${imgVersion}`;
+}
+
+function missingLabel(item) {
+  if (item.has_image && item.has_news_image) return "";
+  if (item.has_image) return "thiếu báo";
+  if (item.has_news_image) return "thiếu shop";
+  return "thiếu ảnh";
 }
 
 function itemCard(item) {
+  const id = escapeHtml(item.id);
   const shop = item.has_image
-    ? `<img src="/api/templates/${item.template}.png?t=${Date.now()}" alt="shop ${item.id}" />`
+    ? `<img src="${templateUrl(item.template)}" alt="shop ${id}" loading="lazy" />`
     : `<div class="ph">Thiếu shop</div>`;
   const news = item.has_news_image
-    ? `<img src="/api/templates/${item.news_template}.png?t=${Date.now()}" alt="báo ${item.id}" />`
+    ? `<img src="${templateUrl(item.news_template)}" alt="báo ${id}" loading="lazy" />`
     : `<div class="ph">Thiếu báo</div>`;
-  const badge = item.has_image && item.has_news_image
-    ? `<span class="badge ok">${item.width}×${item.height}</span>`
-    : `<span class="badge bad">${item.has_image ? "thiếu báo" : item.has_news_image ? "thiếu shop" : "thiếu ảnh"}</span>`;
-  return `<article class="tile" data-id="${item.id}" data-template="${item.template}" data-news-template="${item.news_template}" data-has-image="${item.has_image ? "1" : ""}" data-has-news="${item.has_news_image ? "1" : ""}" title="Bấm để sửa">
+  const missing = missingLabel(item);
+  const stat = buyIndex[item.id] || {};
+  const buys = Number(stat.buy_count) || 0;
+  const badges = [
+    missing ? `<span class="badge bad">${missing}</span>` : "",
+    buys ? `<span class="badge ok" title="Lần mua thành công">đã mua ${buys}</span>` : "",
+  ].join("");
+  return `<article class="tile item-tile${item.enabled ? "" : " off"}" tabindex="0" data-id="${id}" data-template="${escapeHtml(item.template)}" data-news-template="${escapeHtml(item.news_template)}" data-has-image="${item.has_image ? "1" : ""}" data-has-news="${item.has_news_image ? "1" : ""}" title="Bấm để sửa ${id}">
     <div class="pair">
       <div><span class="thumb-cap">Shop</span>${shop}</div>
       <div><span class="thumb-cap">Báo</span>${news}</div>
     </div>
-    <div class="name">${item.id}</div>
-    <div class="meta">${item.template} · ${item.news_template}</div>
-    <div class="row">
-      ${badge}
-      <label class="check"><input type="checkbox" data-toggle="${item.id}" ${item.enabled ? "checked" : ""}/> Mua</label>
-      <button class="btn danger" type="button" data-del-item="${item.id}">Xoá</button>
+    <div class="name">${id}</div>
+    <div class="tile-foot">
+      <div class="badges">${badges}</div>
+      <label class="switch" title="Bật/tắt mua ${id}">
+        <input type="checkbox" data-toggle="${id}" ${item.enabled ? "checked" : ""} />
+        <span class="track" aria-hidden="true"></span>
+        <span class="switch-label">Mua</span>
+      </label>
     </div>
   </article>`;
 }
 
 function cropCard(crop) {
   const img = crop.has_image
-    ? `<img src="/api/templates/${crop.seed_template}.png?t=${Date.now()}" alt="${crop.id}" />`
-    : `<div class="ph">Thiếu hạt<br>${crop.seed_template}.png</div>`;
+    ? `<img src="${templateUrl(crop.seed_template)}" alt="${escapeHtml(crop.id)}" />`
+    : `<div class="ph">Thiếu hạt<br>${escapeHtml(crop.seed_template)}.png</div>`;
   return `<article class="tile">
     ${img}
-    <div class="name">${crop.id}</div>
-    <div class="meta">${crop.storage} · ${crop.seed_template}</div>
+    <div class="name">${escapeHtml(crop.id)}</div>
+    <div class="meta">${escapeHtml(crop.storage)} · ${escapeHtml(crop.seed_template)}</div>
     <div class="row">
-      <button class="btn danger" type="button" data-del-crop="${crop.id}">Xoá</button>
+      <button class="btn danger btn-compact" type="button" data-del-crop="${escapeHtml(crop.id)}">Xoá</button>
     </div>
   </article>`;
 }
 
 function templateCard(tpl) {
   return `<article class="tile">
-    <img src="/api/templates/${tpl.name}.png?t=${Date.now()}" alt="${tpl.name}" />
-    <div class="name">${tpl.name}</div>
-    <div class="meta">${tpl.kind}${tpl.width ? ` · ${tpl.width}×${tpl.height}` : ""}</div>
+    <img src="${templateUrl(tpl.name)}" alt="${escapeHtml(tpl.name)}" loading="lazy" />
+    <div class="name">${escapeHtml(tpl.name)}</div>
+    <div class="meta">${escapeHtml(tpl.kind)}${tpl.width ? ` · ${tpl.width}×${tpl.height}` : ""}</div>
   </article>`;
 }
 
-let lastState = { library: [] };
-let libraryFilter = "all";
+let lastState = {};
+let libraryFilter = localGet("libFilter", "all");
 let pickerSlot = null;
 
 function libraryUrl(id) {
-  return `/api/library/${id}.png?t=${Date.now()}`;
+  return `/api/library/${encodeURIComponent(id)}.png`;
 }
 
 function libraryCard(row, { pick = false } = {}) {
@@ -198,11 +418,11 @@ function libraryCard(row, { pick = false } = {}) {
   const size = row.width ? ` · ${row.width}×${row.height}` : "";
   const action = pick
     ? ""
-    : `<div class="row"><button class="btn danger" type="button" data-del-lib="${row.id}">Xoá</button></div>`;
-  const pickAttr = pick ? ` data-pick-lib="${row.id}"` : "";
+    : `<div class="row"><button class="btn danger btn-compact" type="button" data-del-lib="${escapeHtml(row.id)}">Xoá</button></div>`;
+  const pickAttr = pick ? ` data-pick-lib="${escapeHtml(row.id)}" tabindex="0"` : "";
   return `<article class="tile"${pickAttr}>
-    <img src="${libraryUrl(row.id)}" alt="${row.id}" />
-    <div class="name">${row.id}</div>
+    <img src="${libraryUrl(row.id)}" alt="${escapeHtml(row.id)}" loading="lazy" />
+    <div class="name">${escapeHtml(row.id)}</div>
     <div class="meta">${kindLabel}${size}</div>
     ${action}
   </article>`;
@@ -219,79 +439,270 @@ function renderLibrary(rows) {
   });
 }
 
-function render(state) {
-  lastState = state || lastState;
-  if (state.config) fillConfig(state.config);
-  if (state.wishlist) {
-    $("items").innerHTML = state.wishlist.length
-      ? state.wishlist.map(itemCard).join("")
-      : `<p class="empty">Chưa có item. Crop icon lúa mì từ shop rồi thêm <code>wheat</code>.</p>`;
+// ---------------------------------------------------------------- wishlist
+
+let wishFilter = localGet("wishFilter", "all");
+let wishSort = localGet("wishSort", "name");
+let wishQuery = "";
+let buyIndex = {};
+
+function hasMissing(item) {
+  return !item.has_image || !item.has_news_image;
+}
+
+function wishMatches(item) {
+  if (wishQuery && !item.id.includes(wishQuery)) return false;
+  if (wishFilter === "on") return item.enabled;
+  if (wishFilter === "off") return !item.enabled;
+  if (wishFilter === "missing") return hasMissing(item);
+  return true;
+}
+
+function visibleWishlist() {
+  const stat = (id) => buyIndex[id] || {};
+  const byName = (a, b) => a.id.localeCompare(b.id);
+  const sorters = {
+    name: byName,
+    buys: (a, b) => (Number(stat(b.id).buy_count) || 0) - (Number(stat(a.id).buy_count) || 0) || byName(a, b),
+    recent: (a, b) => ts(stat(b.id).last_buy_at) - ts(stat(a.id).last_buy_at) || byName(a, b),
+    enabled: (a, b) => Number(b.enabled) - Number(a.enabled) || byName(a, b),
+  };
+  return (lastState.wishlist || []).filter(wishMatches).sort(sorters[wishSort] || byName);
+}
+
+function renderWishlist() {
+  const all = lastState.wishlist || [];
+  const counts = {
+    all: all.length,
+    on: all.filter((item) => item.enabled).length,
+    off: all.filter((item) => !item.enabled).length,
+    missing: all.filter(hasMissing).length,
+  };
+  document.querySelectorAll("[data-count]").forEach((el) => {
+    el.textContent = counts[el.dataset.count];
+  });
+  document.querySelectorAll("[data-wish-filter]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.wishFilter === wishFilter);
+  });
+  $("wish-sort").value = wishSort;
+  $("wish-count").textContent = all.length ? `${counts.on}/${counts.all} đang mua` : "";
+  const shown = visibleWishlist();
+  $("wish-shown").textContent = all.length ? `Hiện ${shown.length} / ${all.length} item` : "";
+  document.querySelectorAll("[data-bulk]").forEach((btn) => {
+    btn.disabled = !shown.length;
+  });
+  if (!all.length) {
+    // lastState.wishlist is only a real (empty) list once the server answered.
+    if (!Array.isArray(lastState.wishlist)) return;
+    $("items").innerHTML = `<p class="empty">Chưa có item. Mở “Thêm vật phẩm” ở trên, crop icon từ shop rồi thêm <code>wheat</code>.</p>`;
+    $("item-add").open = true;
+    return;
   }
-  if (state.library) renderLibrary(state.library);
+  $("items").innerHTML = shown.length
+    ? shown.map(itemCard).join("")
+    : `<p class="empty">Không có item khớp bộ lọc.</p>`;
+}
+
+$("wish-search").addEventListener("input", (ev) => {
+  wishQuery = ev.target.value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  renderWishlist();
+});
+$("wish-sort").addEventListener("change", (ev) => {
+  wishSort = ev.target.value;
+  localSet("wishSort", wishSort);
+  renderWishlist();
+});
+
+async function bulkToggle(on) {
+  const ids = visibleWishlist()
+    .filter((item) => item.enabled !== on)
+    .map((item) => item.id);
+  if (!ids.length) {
+    toast(on ? "Các item đang hiện đều đã bật" : "Các item đang hiện đều đã tắt");
+    return;
+  }
+  const ok = await confirmDialog({
+    title: on ? "Bật mua hàng loạt?" : "Tắt mua hàng loạt?",
+    message: `${on ? "Bật" : "Tắt"} mua ${ids.length} item đang hiện: ${ids.slice(0, 8).join(", ")}${ids.length > 8 ? "…" : ""}`,
+    ok: `${on ? "Bật" : "Tắt"} ${ids.length} item`,
+    danger: !on,
+  });
+  if (!ok) return;
+  try {
+    const state = await api("/api/items/bulk", {
+      method: "POST",
+      body: JSON.stringify({ ids, enabled: on }),
+    });
+    render(state);
+    toast(`Đã ${on ? "bật" : "tắt"} ${state.changed} item`);
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+// ---------------------------------------------------------------- render
+
+function render(state) {
+  if (!state) return;
+  lastState = { ...lastState, ...state };
+  fillConfig(state.config);
   if (state.crops) {
     $("crops").innerHTML = state.crops.length
       ? state.crops.map(cropCard).join("")
       : `<p class="empty">Chưa có cây trồng.</p>`;
+    if (!prefsPending) fillCropOptions(state.crops, $("run-crop").value);
+  }
+  if (state.run_prefs) fillRunPrefs(state.run_prefs);
+  if (Array.isArray(state.wishlist_buys)) renderWishlistBuys(state.wishlist_buys);
+  if (state.wishlist) renderWishlist();
+  if (state.library) {
+    renderLibrary(state.library);
+    if (pickerSlot) renderPickerGrid();
   }
   if (state.templates) {
     const system = state.templates.filter((t) => t.kind === "system");
     $("templates").innerHTML = system.map(templateCard).join("");
   }
-  renderMacros(state);
   if (state.run) renderRun(state.run);
-  if (Array.isArray(state.wishlist_buys)) renderWishlistBuys(state.wishlist_buys);
 }
 
 async function refresh() {
   render(await api("/api/state"));
 }
 
+// ---------------------------------------------------------------- polling
+
 let pollTimer = 0;
-function schedulePoll(running) {
+let serverOnline = true;
+
+function pollDelay() {
+  const busy = lastRun && lastRun.status === "running";
+  // A hidden tab still polls (slowly) so it can raise the error notification.
+  if (document.hidden) return busy ? 5000 : 15000;
+  return busy ? 1000 : 3000;
+}
+
+function schedulePoll(delay) {
   clearTimeout(pollTimer);
-  pollTimer = setTimeout(async () => {
-    try {
-      const state = await api("/api/state");
-      renderMacros(state);
-      if (state.run) renderRun(state.run);
-      if (Array.isArray(state.wishlist_buys)) renderWishlistBuys(state.wishlist_buys);
-      const rec = state.run && state.run.recording && state.run.recording.active;
-      schedulePoll(state.run && (state.run.status === "running" || rec));
-    } catch (err) {
-      schedulePoll(false);
+  pollTimer = setTimeout(pollStatus, delay ?? pollDelay());
+}
+
+async function pollStatus() {
+  try {
+    const status = await api("/api/status");
+    if (!serverOnline) {
+      serverOnline = true;
+      toast("Đã kết nối lại server web");
+      // The server may have restarted: config, prefs and lists could differ.
+      await refresh().catch(() => {});
     }
-  }, running ? 800 : 2500);
+    renderRun(status.run);
+    renderWishlistBuys(status.wishlist_buys);
+  } catch (err) {
+    if (serverOnline) {
+      serverOnline = false;
+      toast("Mất kết nối server web — đang thử lại…", true);
+    }
+    renderDevicePill();
+  }
+  schedulePoll();
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) schedulePoll(0);
+});
+
+// ---------------------------------------------------------------- run state
+
+const RUN_LABELS = {
+  loop: "Vòng lặp",
+  connect: "Kết nối",
+  screenshot: "Chụp màn hình",
+  detect: "Nhận diện",
+  back: "Back",
+  home: "Home",
+  pan: "Pan camera",
+  harvest: "Thu hoạch",
+  plant: "Trồng",
+  newspaper: "Mua trên báo",
+  restart_game: "Khởi động lại game",
+  go_home: "Về nhà",
+  find_column: "Tìm cột báo",
+  open_newspaper: "Mở báo",
+  scan_ads: "Quét tin",
+  swipe_newspaper: "Lật trang",
+  visit_shop: "Vào shop",
+  buy_wishlist: "Mua wishlist",
+  close_shop: "Đóng shop",
+  buy_shop: "Nhận diện & mua",
+  capture_shop: "Lưu icon shop",
+  capture_news: "Lưu icon tin báo",
+};
+const PHASE_LABELS = {
+  home: "về nhà",
+  harvest: "thu hoạch",
+  plant: "trồng",
+  newspaper: "ghé shop trên báo",
+  rest: "nghỉ giữa vòng",
+};
+// Jobs that finish too often to toast each time.
+const QUIET_JOBS = new Set(["screenshot", "pan"]);
+// Jobs that add icons to the library: reload the lists once they finish.
+const REFRESH_AFTER = new Set(["capture_shop", "capture_news"]);
+
+let lastRun = null;
+let lastFrameSeq = -1;
+let lastLogText = "";
+let sessionBuys = 0;
+
+function jobLabel(job) {
+  return RUN_LABELS[job] || job || "";
+}
+
+function renderDevicePill() {
+  const device = $("device-pill");
+  if (!serverOnline) {
+    device.textContent = "Mất kết nối server";
+    device.className = "pill err";
+    return;
+  }
+  const run = lastRun || {};
+  device.textContent = run.connected ? run.serial || "Đã kết nối" : "Chưa kết nối";
+  device.className = `pill${run.connected ? " live" : ""}`;
 }
 
 function renderRun(run) {
-  const device = $("device-pill");
+  if (!run) return;
+  if (typeof run.now === "number") clockOffset = run.now * 1000 - Date.now();
+  const prev = lastRun;
+  lastRun = run;
+  renderDevicePill();
+
   const pill = $("run-pill");
-  device.textContent = run.connected ? run.serial || "Đã kết nối" : "Chưa kết nối";
-  device.classList.toggle("live", Boolean(run.connected));
-  let label = "Đang nghỉ";
-  pill.className = "pill idle";
+  const busy = run.status === "running";
   if (run.stopping) {
-    label = "Đang dừng…";
-  } else if (run.status === "recording") {
-    label = `Đang ghi: ${(run.recording && run.recording.name) || ""}`;
+    pill.textContent = "Đang dừng…";
+    pill.className = "pill warn";
+  } else if (busy && run.rest_until) {
+    pill.textContent = "⏸ Nghỉ giữa vòng";
     pill.className = "pill live";
-  } else if (run.status === "running") {
-    label = `Đang chạy: ${run.job || ""}`;
+  } else if (busy) {
+    pill.textContent = `▶ ${jobLabel(run.job)}`;
     pill.className = "pill live";
   } else if (run.status === "error") {
-    label = "Lỗi";
+    pill.textContent = "⚠ Lỗi";
     pill.className = "pill err";
+  } else {
+    pill.textContent = "Sẵn sàng";
+    pill.className = "pill idle";
   }
-  pill.textContent = label;
-  const busy = run.status === "running";
-  const rec = Boolean(run.recording && run.recording.active);
-  $("btn-start").disabled = busy || rec;
-  $("btn-stop").disabled = !busy;
-  $("btn-record").disabled = busy || rec;
-  $("btn-record-stop").disabled = !rec;
-  $("btn-macro-play").disabled = busy || rec;
-  $("btn-macro-back").disabled = !rec;
-  $("viewport").classList.toggle("recording", rec);
+
+  document.querySelectorAll("[data-run], [data-pan]").forEach((btn) => {
+    btn.disabled = busy;
+  });
+  $("btn-start").disabled = busy;
+  $("btn-stop").disabled = !busy || Boolean(run.stopping);
+
   const note = [];
   if (run.screen) note.push(`Màn: ${run.screen}`);
   if (run.last_result) {
@@ -300,14 +711,266 @@ function renderRun(run) {
   }
   if (run.last_error) note.push(run.last_error);
   $("run-note").textContent = note.join(" · ");
-  $("run-log").textContent = (run.logs || []).slice(-40).join("\n");
+
+  renderLog(run.logs);
   renderTiming(run.timing);
-  if (run.has_frame) {
-    $("live-frame").src = `/api/frame.png?t=${Date.now()}`;
-    $("live-frame").hidden = false;
+  if (run.has_frame && run.frame_seq !== lastFrameSeq) {
+    lastFrameSeq = run.frame_seq;
+    $("live-frame").src = `/api/frame.png?seq=${run.frame_seq ?? Date.now()}`;
+    $("live-link").hidden = false;
     $("live-empty").hidden = true;
   }
+  renderRunStatus();
+  renderFrameAge();
+  handleTransition(prev, run);
+  updateTitle();
 }
+
+function renderRunStatus() {
+  const run = lastRun;
+  if (!run) return;
+  const busy = run.status === "running";
+  const resting = busy && run.rest_until;
+  const box = $("run-status");
+  let cls = "idle";
+  let title = "Sẵn sàng";
+  let sub = run.finished_at
+    ? `Lần chạy trước kết thúc ${relTime(run.finished_at * 1000)}.`
+    : "Chọn hành vi rồi bấm Bắt đầu.";
+  if (run.stopping) {
+    cls = "stopping";
+    title = "Đang dừng…";
+    sub = "Đợi bước hiện tại xong rồi dừng.";
+  } else if (busy && run.job === "loop") {
+    cls = resting ? "resting" : "live";
+    title = `Vòng ${(run.rounds || 0) + (resting ? 0 : 1)} · ${PHASE_LABELS[run.phase] || "đang chạy"}`;
+    sub = resting ? "Hết shop trên báo, nghỉ rồi chạy vòng mới." : "Bot đang tự chơi. Bấm Dừng để ngắt.";
+  } else if (busy) {
+    cls = "live";
+    title = `Đang chạy: ${jobLabel(run.job)}`;
+    sub = "Lệnh một lần — xong sẽ tự nghỉ.";
+  } else if (run.status === "error") {
+    cls = "err";
+    title = `Lỗi${run.job ? ` · ${jobLabel(run.job)}` : ""}`;
+    sub = run.last_error || "Xem nhật ký bên cạnh.";
+  }
+  box.className = `run-status ${cls}`;
+  $("run-status-title").textContent = title;
+  $("run-status-sub").textContent = sub;
+
+  const started = run.started_at ? run.started_at * 1000 : 0;
+  const ended = busy ? serverNow() : run.finished_at ? run.finished_at * 1000 : 0;
+  $("stat-elapsed").textContent = started && ended ? fmtDuration(ended - started) : "—";
+  $("stat-rounds").textContent = run.job === "loop" || run.rounds ? String(run.rounds || 0) : "—";
+  $("stat-buys").textContent = started ? String(sessionBuys) : "—";
+
+  const restBox = $("rest-box");
+  restBox.hidden = !resting;
+  if (resting) {
+    const left = Math.max(0, run.rest_until * 1000 - serverNow());
+    const total = Math.max(1, (run.rest_s || 1) * 1000);
+    $("rest-left").textContent = fmtDuration(left + 999);
+    $("rest-bar-fill").style.width = `${Math.min(100, Math.max(0, 100 - (left / total) * 100))}%`;
+  }
+}
+
+function renderFrameAge() {
+  const run = lastRun;
+  const el = $("frame-age");
+  if (!run || !run.frame_at) {
+    el.textContent = "";
+    return;
+  }
+  const s = Math.max(0, Math.round((serverNow() - run.frame_at * 1000) / 1000));
+  el.textContent = s < 60 ? `ảnh ${s}s trước` : `ảnh ${relTime(run.frame_at * 1000)}`;
+}
+
+setInterval(() => {
+  renderRunStatus();
+  renderFrameAge();
+}, 1000);
+
+function logClass(line) {
+  if (/\bFAIL\b|error|lỗi|Traceback/i.test(line)) return "log-fail";
+  if (/\b(ok|done)\b/.test(line)) return "log-ok";
+  return "";
+}
+
+function renderLog(lines) {
+  const el = $("run-log");
+  const list = (lines || []).slice(-60);
+  const text = list.join("\n");
+  if (text === lastLogText) return;
+  lastLogText = text;
+  // Follow new lines only when already at the bottom: scrolling up to read
+  // an older line must not get yanked away every second.
+  const stick = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  el.innerHTML = list.map((line) => `<span class="${logClass(line)}">${escapeHtml(line)}</span>`).join("\n");
+  if (stick) el.scrollTop = el.scrollHeight;
+}
+
+function handleTransition(prev, run) {
+  if (!prev || prev.status !== "running" || run.status === "running") return;
+  const job = prev.job;
+  if (REFRESH_AFTER.has(job)) refresh().catch(() => {});
+  if (run.status === "error") {
+    const msg = run.last_error || "Bot gặp lỗi";
+    toast(`${jobLabel(job)} lỗi: ${msg}`, true);
+    notify("Bot lỗi", msg);
+    return;
+  }
+  if (job === "loop") {
+    toast("Vòng lặp đã dừng");
+    notify("Bot đã dừng", "Vòng lặp kết thúc.");
+    return;
+  }
+  if (QUIET_JOBS.has(job)) return;
+  const r = run.last_result;
+  if (r && r.ok === false) {
+    toast(`${jobLabel(job)} thất bại${r.error ? `: ${r.error}` : ""}`, true);
+  } else if (job === "connect") {
+    toast(`Đã kết nối ${run.serial || ""}`.trim());
+  } else {
+    toast(`${jobLabel(job)} xong`);
+  }
+}
+
+// ---------------------------------------------------------------- title & notifications
+
+const canNotify = "Notification" in window && window.isSecureContext;
+
+function syncNotifyBtn() {
+  $("btn-notify").hidden = !canNotify || Notification.permission !== "default";
+}
+
+function notify(title, body) {
+  if (!canNotify || Notification.permission !== "granted" || !document.hidden) return;
+  try {
+    new Notification(title, { body, tag: "farmbot" });
+  } catch (err) {
+    /* some browsers only allow notifications from a service worker */
+  }
+}
+
+$("btn-notify").addEventListener("click", async () => {
+  try {
+    const answer = await Notification.requestPermission();
+    if (answer === "granted") toast("Sẽ báo khi bot lỗi hoặc dừng lúc tab đang ẩn");
+  } catch (err) {
+    toast("Trình duyệt không cho bật thông báo", true);
+  }
+  syncNotifyBtn();
+});
+
+// ---------------------------------------------------------------- share
+
+function drawShareQr(url) {
+  const canvas = $("share-qr");
+  if (typeof qrcode !== "function") {
+    canvas.hidden = true;
+    return;
+  }
+  const qr = qrcode(0, "M");
+  qr.addData(url);
+  qr.make();
+  const count = qr.getModuleCount();
+  const quiet = 4;
+  const cell = Math.floor(canvas.width / (count + quiet * 2));
+  const size = cell * (count + quiet * 2);
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = "#000";
+  for (let r = 0; r < count; r++) {
+    for (let c = 0; c < count; c++) {
+      if (qr.isDark(r, c)) ctx.fillRect((c + quiet) * cell, (r + quiet) * cell, cell, cell);
+    }
+  }
+  canvas.hidden = false;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (err) {
+    // Plain-HTTP pages are not a secure context, so the clipboard API can be missing.
+    const box = document.createElement("textarea");
+    box.value = text;
+    document.body.appendChild(box);
+    box.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch (e) {
+      ok = false;
+    }
+    box.remove();
+    return ok;
+  }
+}
+
+async function openShare() {
+  try {
+    const info = await api("/api/share");
+    const urls = info.urls || [];
+    $("share-list").innerHTML = urls
+      .map(
+        (url, i) => `<li>
+        <button type="button" class="share-url${i === 0 ? " active" : ""}" data-share-url="${escapeHtml(url)}">${escapeHtml(url)}</button>
+        <button type="button" class="btn btn-compact" data-share-copy="${escapeHtml(url)}">Copy</button>
+      </li>`
+      )
+      .join("");
+    $("share-note").textContent = info.local_only
+      ? "Server đang chỉ nghe localhost. Chạy web với --host 0.0.0.0 để chia sẻ."
+      : urls.length
+        ? ""
+        : "Không tìm thấy địa chỉ mạng LAN. Kiểm tra kết nối Wi-Fi/LAN của máy tính.";
+    if (urls.length) drawShareQr(urls[0]);
+    else $("share-qr").hidden = true;
+    $("share-modal").showModal();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+$("btn-share").addEventListener("click", openShare);
+$("share-close").addEventListener("click", () => $("share-modal").close());
+$("share-modal").addEventListener("click", async (ev) => {
+  if (ev.target === $("share-modal")) return $("share-modal").close();
+  const copy = ev.target.closest("[data-share-copy]");
+  if (copy) {
+    toast((await copyText(copy.dataset.shareCopy)) ? "Đã copy link" : "Không copy được, hãy chọn link thủ công", false);
+    return;
+  }
+  const pick = ev.target.closest("[data-share-url]");
+  if (pick) {
+    document.querySelectorAll("[data-share-url]").forEach((el) => el.classList.toggle("active", el === pick));
+    drawShareQr(pick.dataset.shareUrl);
+  }
+});
+
+function updateTitle() {
+  const run = lastRun;
+  let prefix = "";
+  let icon = "🌾";
+  if (run && run.status === "running") {
+    prefix = run.rest_until ? "⏸ " : "▶ ";
+    icon = run.rest_until ? "⏸️" : "▶️";
+  } else if (run && run.status === "error") {
+    prefix = "⚠ ";
+    icon = "⚠️";
+  }
+  document.title = `${prefix}Hay Day Bot — ${PAGE_META[currentPage].title}`;
+  const href = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>${icon}</text></svg>`;
+  const link = $("favicon");
+  if (link.getAttribute("href") !== href) link.setAttribute("href", href);
+}
+
+// ---------------------------------------------------------------- timing
 
 // Loop order, not alphabetical: the table reads like one shop visit.
 const TIMING_ORDER = [
@@ -412,59 +1075,107 @@ function renderTiming(timing) {
     : "";
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+$("timing-details").open = Boolean(localGet("timingOpen", false));
+$("timing-details").addEventListener("toggle", (ev) => localSet("timingOpen", ev.target.open));
+
+// ---------------------------------------------------------------- buy history
+
+let lastWishlistBuys = [];
+let showAllBuys = Boolean(localGet("buyShowAll", false));
+let buyLogKey = "";
+let wishBuyKey = "";
+
+function lastActivity(row) {
+  return Math.max(ts(row.last_buy_at), ts(row.last_match_at));
 }
 
-function formatBuyTime(iso) {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso || "";
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
+function renderBuySummary() {
+  const now = new Date(serverNow());
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const since = lastRun && lastRun.started_at ? lastRun.started_at * 1000 : 0;
+  let buysToday = 0;
+  let qtyToday = 0;
+  let matchesToday = 0;
+  let session = 0;
+  for (const row of lastWishlistBuys) {
+    for (const ev of row.buys || []) {
+      const t = ts(ev.at);
+      if (t >= dayStart) {
+        buysToday += 1;
+        qtyToday += Number(ev.qty) || 0;
+      }
+      if (since && t >= since) session += 1;
+    }
+    for (const ev of row.matches || []) {
+      if (ts(ev.at) >= dayStart) matchesToday += 1;
+    }
+  }
+  sessionBuys = session;
+  $("buy-summary").innerHTML = `Hôm nay: <b>${buysToday}</b> lần mua${
+    qtyToday ? ` (×${qtyToday})` : ""
+  } · <b>${matchesToday}</b> lần khớp`;
+}
+
+function buyRow(row) {
+  const src = row.has_image ? templateUrl(row.template) : row.has_news_image ? templateUrl(row.news_template) : "";
+  const thumb = src ? `<img src="${escapeHtml(src)}" alt="" />` : `<span class="ph">?</span>`;
+  const matches = Number(row.match_count) || 0;
+  const buys = Number(row.buy_count) || 0;
+  const qtySum = Number(row.qty_sum) || 0;
+  const id = escapeHtml(row.id);
+  const matchCell =
+    matches > 0
+      ? `<button type="button" class="buy-count" data-hist="match" data-id="${id}">${matches}</button>`
+      : `<span class="buy-count zero">0</span>`;
+  const buyCell =
+    buys > 0
+      ? `<button type="button" class="buy-count" data-hist="buy" data-id="${id}">${buys}</button>`
+      : `<span class="buy-count zero">0</span>`;
+  const lastBuy = ts(row.last_buy_at);
+  const lastMatch = ts(row.last_match_at);
+  const when = lastBuy ? `mua ${relTime(lastBuy)}` : lastMatch ? `khớp ${relTime(lastMatch)}` : "";
+  const off = row.enabled === false ? `<span class="tag-off">tắt</span>` : "";
+  return `<tr class="${row.enabled === false ? "off" : ""}">
+    <td><div class="item">${thumb}<div class="item-text"><b>${id}</b>${off}<small>${escapeHtml(when)}</small></div></div></td>
+    <td>${matchCell}</td>
+    <td>${buyCell}</td>
+    <td class="buy-qty-cell">${qtySum > 0 ? qtySum : `<span class="buy-count zero">0</span>`}</td>
+  </tr>`;
 }
 
 function renderWishlistBuys(rows) {
-  const el = $("buy-log");
-  if (!el) return;
-  lastWishlistBuys = Array.isArray(rows) ? rows : [];
-  if (!lastWishlistBuys.length) {
-    el.innerHTML = `<tr><td colspan="3" class="muted">Chưa có item wishlist đang bật</td></tr>`;
-    return;
+  if (!Array.isArray(rows)) return;
+  lastWishlistBuys = rows;
+  buyIndex = Object.fromEntries(rows.map((row) => [row.id, row]));
+  renderBuySummary();
+  const counts = rows.map((r) => [r.id, r.enabled, r.match_count, r.buy_count, r.qty_sum, r.last_buy_at, r.last_match_at]);
+  // Rebuild only on new data (or every 30 s for the "x phút trước" text).
+  const key = JSON.stringify([counts, showAllBuys, Math.floor(Date.now() / 30000)]);
+  if (key !== buyLogKey) {
+    buyLogKey = key;
+    const active = rows.filter((row) => row.match_count || row.buy_count).sort((a, b) => lastActivity(b) - lastActivity(a));
+    const idle = showAllBuys ? rows.filter((row) => row.enabled !== false && !row.match_count && !row.buy_count) : [];
+    const shown = [...active, ...idle];
+    $("buy-log").innerHTML = shown.length
+      ? shown.map(buyRow).join("")
+      : `<tr><td colspan="4" class="muted">${
+          showAllBuys ? "Chưa có item wishlist đang bật" : "Chưa khớp hay mua item nào. Tick “Cả item chưa mua” để xem hết."
+        }</td></tr>`;
   }
-  el.innerHTML = lastWishlistBuys
-    .map((row) => {
-      const src = row.has_image
-        ? `/api/templates/${row.template}.png?t=1`
-        : row.has_news_image
-          ? `/api/templates/${row.news_template}.png?t=1`
-          : "";
-      const thumb = src
-        ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(row.id)}" />`
-        : `<span class="ph">?</span>`;
-      const matches = Number(row.match_count) || 0;
-      const buys = Number(row.buy_count) || 0;
-      const qtySum = Number(row.qty_sum) || 0;
-      const matchCell =
-        matches > 0
-          ? `<button type="button" class="buy-count" data-hist="match" data-id="${escapeHtml(row.id)}">${matches}</button>`
-          : `<span class="buy-count zero">0</span>`;
-      const qtyHint = qtySum > 0 ? `<span class="buy-qty">×${qtySum}</span>` : "";
-      const buyCell =
-        buys > 0
-          ? `<button type="button" class="buy-count" data-hist="buy" data-id="${escapeHtml(row.id)}">${buys}</button>${qtyHint}`
-          : `<span class="buy-count zero">0</span>`;
-      return `<tr>
-        <td><div class="item">${thumb}<b>${escapeHtml(row.id)}</b></div></td>
-        <td>${matchCell}</td>
-        <td>${buyCell}</td>
-      </tr>`;
-    })
-    .join("");
+  // Buy counts show on the wishlist cards too.
+  const wishKey = JSON.stringify(counts);
+  if (wishKey !== wishBuyKey) {
+    wishBuyKey = wishKey;
+    if (currentPage === "wishlist") renderWishlist();
+  }
 }
+
+$("buy-show-all").checked = showAllBuys;
+$("buy-show-all").addEventListener("change", (ev) => {
+  showAllBuys = ev.target.checked;
+  localSet("buyShowAll", showAllBuys);
+  renderWishlistBuys(lastWishlistBuys);
+});
 
 function openBuyHistory(itemId, kind) {
   const row = lastWishlistBuys.find((entry) => entry.id === itemId);
@@ -480,7 +1191,7 @@ function openBuyHistory(itemId, kind) {
       const label = qty ? `${qty} · ${time}` : time;
       if (kind === "buy" && ev.image) {
         const src = `/api/buy-proofs/${encodeURIComponent(ev.image)}.png`;
-        return `<li class="buy-proof"><img src="${escapeHtml(src)}" alt="" /><span>${escapeHtml(label)}</span></li>`;
+        return `<li class="buy-proof"><a href="${escapeHtml(src)}" target="_blank" rel="noopener" title="Mở ảnh gốc"><img src="${escapeHtml(src)}" alt="" /></a><span>${escapeHtml(label)}</span></li>`;
       }
       return `<li>${escapeHtml(label)}</li>`;
     })
@@ -488,149 +1199,14 @@ function openBuyHistory(itemId, kind) {
   $("buy-history-modal").showModal();
 }
 
-let lastStepsKey = "";
-let lastMacroListKey = "";
-let lastWishlistBuys = [];
-
-function stepLabel(step) {
-  if (step.type === "tap") return `tap ${step.x},${step.y}`;
-  if (step.type === "swipe") {
-    return `swipe ${step.x1},${step.y1} → ${step.x2},${step.y2} (${step.duration_ms}ms)`;
-  }
-  if (step.type === "wait") return "wait";
-  return step.type;
-}
-
-function renderMacros(state) {
-  const rec = (state.run && state.run.recording) || null;
-  const active = Boolean(rec && rec.active);
-  if (rec && rec.name && !$("macro-name").value) $("macro-name").value = rec.name;
-  $("macro-note").textContent = active
-    ? `Đang ghi ${rec.name} ${rec.width}×${rec.height} — click/kéo trên ảnh live hoặc chơi trên máy ảo`
-    : "Nhập tên rồi Ghi. Phát lại macro đã lưu bên dưới.";
-  const steps = (rec && rec.steps) || [];
-  const stepsKey = JSON.stringify(steps);
-  const editing = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.waitIdx != null;
-  if (stepsKey !== lastStepsKey && !editing) {
-    lastStepsKey = stepsKey;
-    $("macro-steps").innerHTML = steps
-      .map((step, i) => {
-        const wait =
-          step.type === "wait"
-            ? `<input type="number" min="0" max="5000" data-wait-idx="${i}" value="${step.ms}" /> ms`
-            : "";
-        return `<li><span>${stepLabel(step)}</span>${wait}<button class="btn danger" type="button" data-del-step="${i}">Xoá</button></li>`;
-      })
-      .join("");
-  }
-  const list = state.macros || [];
-  const listKey = JSON.stringify(list);
-  if (listKey !== lastMacroListKey) {
-    lastMacroListKey = listKey;
-    $("macros").innerHTML = list.length
-      ? list
-          .map(
-            (row) => `<article class="tile">
-        <div class="name">${row.name}</div>
-        <div class="meta">${row.steps} bước · ${row.width}×${row.height}</div>
-        <div class="row">
-          <button class="btn" type="button" data-play-macro="${row.id}">Phát</button>
-          <button class="btn danger" type="button" data-del-macro="${row.id}">Xoá</button>
-        </div>
-      </article>`
-          )
-          .join("")
-      : `<p class="empty">Chưa có macro.</p>`;
-  }
-}
-
-function frameToDevice(img, clientX, clientY) {
-  const rect = img.getBoundingClientRect();
-  const nw = img.naturalWidth || 1920;
-  const nh = img.naturalHeight || 1080;
-  const scale = Math.min(rect.width / nw, rect.height / nh);
-  const dispW = nw * scale;
-  const dispH = nh * scale;
-  const ox = rect.left + (rect.width - dispW) / 2;
-  const oy = rect.top + (rect.height - dispH) / 2;
-  const x = Math.round((clientX - ox) / scale);
-  const y = Math.round((clientY - oy) / scale);
-  return {
-    x: Math.max(0, Math.min(nw - 1, x)),
-    y: Math.max(0, Math.min(nh - 1, y)),
-  };
-}
-
-function applyRunState(state) {
-  renderMacros(state);
-  if (state.run) renderRun(state.run);
-  if (Array.isArray(state.wishlist_buys)) renderWishlistBuys(state.wishlist_buys);
-}
-
-function newsMode() {
-  const el = document.querySelector("input[name=news-mode]:checked");
-  return (el && el.value) || "follow";
-}
-
-function runPayload(action, extra) {
-  return {
-    action,
-    harvest: $("bh").checked,
-    plant: $("bp").checked,
-    newspaper: $("bn").checked,
-    news_mode: newsMode(),
-    crop: $("run-crop").value || "wheat",
-    limit: Number($("run-limit").value) || 1,
-    loop_rest_min: Number($("run-rest-min").value),
-    ...extra,
-  };
-}
-
-const RUN_LABELS = {
-  loop: "vòng lặp",
-  go_home: "Về nhà",
-  rest: "Nghỉ giữa vòng",
-  find_column: "Tìm cột báo",
-  open_newspaper: "Mở báo",
-  scan_ads: "Quét tin",
-  swipe_newspaper: "Lật trang",
-  visit_shop: "Vào shop",
-  buy_wishlist: "Mua wishlist",
-  close_shop: "Đóng shop",
-  buy_shop: "Nhận diện & mua",
-  capture_shop: "Lưu icon shop",
-  capture_news: "Lưu icon tin báo",
-};
-
-async function sendRun(action, extra) {
-  try {
-    const state = await api("/api/run", {
-      method: "POST",
-      body: JSON.stringify(runPayload(action, extra)),
-    });
-    renderRun(state.run);
-    toast(action === "loop" ? "Đã bắt đầu vòng lặp" : `Chạy ${RUN_LABELS[action] || action}`);
-    if (action === "capture_shop" || action === "capture_news") {
-      await refresh();
-    }
-    schedulePoll(state.run && state.run.status === "running");
-  } catch (err) {
-    toast(err.message, true);
-  }
-}
-
-$("btn-start").addEventListener("click", () => sendRun("loop"));
-$("btn-stop").addEventListener("click", async () => {
-  try {
-    const state = await api("/api/stop", { method: "POST", body: "{}" });
-    renderRun(state.run);
-    toast("Đã gửi lệnh dừng");
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
-
 $("btn-buy-reset").addEventListener("click", async () => {
+  const total = lastWishlistBuys.reduce((n, row) => n + (row.match_count || 0) + (row.buy_count || 0), 0);
+  const ok = await confirmDialog({
+    title: "Xoá lịch sử mua?",
+    message: `Xoá ${total} lần khớp/mua và mọi ảnh bằng chứng mua. Không hoàn tác được.`,
+    ok: "Xoá lịch sử",
+  });
+  if (!ok) return;
   try {
     const state = await api("/api/purchases", { method: "DELETE" });
     if (Array.isArray(state.wishlist_buys)) renderWishlistBuys(state.wishlist_buys);
@@ -650,91 +1226,83 @@ $("buy-history-modal").addEventListener("click", (ev) => {
   if (ev.target === $("buy-history-modal")) $("buy-history-modal").close();
 });
 
-$("btn-record").addEventListener("click", async () => {
+// ---------------------------------------------------------------- run commands
+
+function runPayload(action, extra) {
+  return {
+    action,
+    ...currentPrefs(),
+    ...extra,
+  };
+}
+
+async function sendRun(action, extra) {
   try {
-    const state = await api("/api/macros/record/start", {
+    const state = await api("/api/run", {
       method: "POST",
-      body: JSON.stringify({ name: $("macro-name").value }),
+      body: JSON.stringify(runPayload(action, extra)),
     });
-    lastStepsKey = "";
-    applyRunState(state);
-    toast("Đang ghi macro");
-    schedulePoll(true);
+    renderRun(state.run);
+    if (action === "loop") toast("Đã bắt đầu vòng lặp");
+    // Fast jobs finish before the next regular poll: look again soon.
+    schedulePoll(400);
   } catch (err) {
     toast(err.message, true);
+    if (err.status === 409) schedulePoll(0);
   }
+}
+
+$("btn-start").addEventListener("click", async () => {
+  const prefs = currentPrefs();
+  if (!(prefs.harvest || prefs.plant || prefs.newspaper)) {
+    toast("Chọn ít nhất một hành vi: Thu hoạch, Trồng hoặc Báo", true);
+    return;
+  }
+  if (prefsPending) await savePrefs();
+  await sendRun("loop");
 });
 
-$("btn-record-stop").addEventListener("click", async () => {
+$("btn-stop").addEventListener("click", async () => {
   try {
-    const state = await api("/api/macros/record/stop", { method: "POST", body: "{}" });
-    lastStepsKey = "";
-    lastMacroListKey = "";
-    applyRunState(state);
-    toast("Đã lưu macro");
-    schedulePoll(false);
+    const state = await api("/api/stop", { method: "POST", body: "{}" });
+    renderRun(state.run);
+    toast("Đã gửi lệnh dừng — bot dừng sau bước hiện tại");
+    schedulePoll(400);
   } catch (err) {
     toast(err.message, true);
   }
 });
 
-$("btn-macro-play").addEventListener("click", () => {
-  sendRun("macro", { name: $("macro-name").value });
-});
-
-$("btn-macro-back").addEventListener("click", async () => {
+$("btn-skip-rest").addEventListener("click", async () => {
+  const btn = $("btn-skip-rest");
+  btn.disabled = true;
   try {
-    const state = await api("/api/macros/gesture", {
-      method: "POST",
-      body: JSON.stringify({ type: "back" }),
-    });
-    lastStepsKey = "";
-    applyRunState(state);
+    const state = await api("/api/skip-rest", { method: "POST", body: "{}" });
+    renderRun(state.run);
+    toast("Bỏ qua nghỉ — vòng mới bắt đầu");
+    schedulePoll(400);
   } catch (err) {
     toast(err.message, true);
+  } finally {
+    btn.disabled = false;
   }
 });
 
-let drag = null;
-const live = $("live-frame");
-live.addEventListener("pointerdown", (ev) => {
-  if (!$("viewport").classList.contains("recording")) return;
-  if (ev.button !== 0) return;
-  ev.preventDefault();
-  live.setPointerCapture(ev.pointerId);
-  const pt = frameToDevice(live, ev.clientX, ev.clientY);
-  drag = { ...pt, t: Date.now() };
-});
-live.addEventListener("pointerup", async (ev) => {
-  if (!drag) return;
-  ev.preventDefault();
-  const end = frameToDevice(live, ev.clientX, ev.clientY);
-  const start = drag;
-  drag = null;
-  const dist = Math.hypot(end.x - start.x, end.y - start.y);
-  const duration_ms = Math.max(80, Date.now() - start.t);
-  const body =
-    dist < 12
-      ? { type: "tap", x: start.x, y: start.y }
-      : { type: "swipe", x1: start.x, y1: start.y, x2: end.x, y2: end.y, duration_ms };
-  try {
-    const state = await api("/api/macros/gesture", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    lastStepsKey = "";
-    applyRunState(state);
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
-live.addEventListener("dragstart", (ev) => ev.preventDefault());
+// ---------------------------------------------------------------- clicks
 
 document.body.addEventListener("click", async (ev) => {
   const runBtn = ev.target.closest("[data-run]");
   const panBtn = ev.target.closest("[data-pan]");
   if (runBtn) {
     ev.preventDefault();
+    if (runBtn.dataset.confirm) {
+      const ok = await confirmDialog({
+        title: runBtn.textContent.trim(),
+        message: runBtn.dataset.confirm,
+        ok: runBtn.dataset.confirmOk || "Tiếp tục",
+      });
+      if (!ok) return;
+    }
     await sendRun(runBtn.dataset.run, {
       ...(runBtn.dataset.newsMode ? { news_mode: runBtn.dataset.newsMode } : {}),
     });
@@ -745,51 +1313,47 @@ document.body.addEventListener("click", async (ev) => {
     await sendRun("pan", { direction: panBtn.dataset.pan });
     return;
   }
-  const delItem = ev.target.closest("[data-del-item]");
   const delCrop = ev.target.closest("[data-del-crop]");
-  const delMacro = ev.target.closest("[data-del-macro]");
   const delLib = ev.target.closest("[data-del-lib]");
   const pickLib = ev.target.closest("[data-pick-lib]");
   const openPicker = ev.target.closest("[data-open-picker]");
   const libFilter = ev.target.closest("[data-lib-filter]");
-  const playMacro = ev.target.closest("[data-play-macro]");
-  const delStep = ev.target.closest("[data-del-step]");
+  const wishFilterBtn = ev.target.closest("[data-wish-filter]");
+  const bulkBtn = ev.target.closest("[data-bulk]");
   try {
-    if (playMacro) {
-      $("macro-name").value = playMacro.dataset.playMacro;
-      await sendRun("macro", { name: playMacro.dataset.playMacro });
-      return;
-    }
-    if (delStep) {
-      const state = await api(`/api/macros/record/steps/${delStep.dataset.delStep}`, {
-        method: "DELETE",
-      });
-      lastStepsKey = "";
-      applyRunState(state);
-      return;
-    }
-    if (delMacro) {
-      await api(`/api/macros/${delMacro.dataset.delMacro}`, { method: "DELETE" });
-      lastMacroListKey = "";
-      toast("Đã xoá macro");
-      await refresh();
-      return;
-    }
-    if (delItem) {
-      await api(`/api/items/${delItem.dataset.delItem}`, { method: "DELETE" });
-      toast("Đã xoá item");
-      await refresh();
-      return;
-    }
     if (delLib) {
-      await api(`/api/library/${delLib.dataset.delLib}`, { method: "DELETE" });
+      const id = delLib.dataset.delLib;
+      const ok = await confirmDialog({
+        title: "Xoá icon khỏi thư viện?",
+        message: `Xoá ${id}. Vật phẩm đã gán ảnh này vẫn giữ bản sao của nó.`,
+      });
+      if (!ok) return;
+      render(await api(`/api/library/${encodeURIComponent(id)}`, { method: "DELETE" }));
       toast("Đã xoá khỏi thư viện");
-      await refresh();
+      return;
+    }
+    if (delCrop) {
+      const id = delCrop.dataset.delCrop;
+      const ok = await confirmDialog({ title: "Xoá cây trồng?", message: `Xoá ${id} khỏi danh sách cây trồng.` });
+      if (!ok) return;
+      render(await api(`/api/crops/${encodeURIComponent(id)}`, { method: "DELETE" }));
+      toast("Đã xoá cây trồng");
       return;
     }
     if (libFilter) {
       libraryFilter = libFilter.dataset.libFilter;
-      renderLibrary((lastState && lastState.library) || []);
+      localSet("libFilter", libraryFilter);
+      renderLibrary(lastState.library || []);
+      return;
+    }
+    if (wishFilterBtn) {
+      wishFilter = wishFilterBtn.dataset.wishFilter;
+      localSet("wishFilter", wishFilter);
+      renderWishlist();
+      return;
+    }
+    if (bulkBtn) {
+      await bulkToggle(bulkBtn.dataset.bulk === "on");
       return;
     }
     if (openPicker) {
@@ -804,17 +1368,22 @@ document.body.addEventListener("click", async (ev) => {
     const itemTile = ev.target.closest("#items .tile");
     if (itemTile && !ev.target.closest("button, input, label")) {
       openItemModal(itemTile);
-      return;
-    }
-    if (delCrop) {
-      await api(`/api/crops/${delCrop.dataset.delCrop}`, { method: "DELETE" });
-      toast("Đã xoá cây trồng");
-      await refresh();
     }
   } catch (err) {
     toast(err.message, true);
   }
 });
+
+document.body.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter" && ev.key !== " ") return;
+  const tile = ev.target.closest("#items .tile, [data-pick-lib]");
+  if (!tile || ev.target !== tile) return;
+  ev.preventDefault();
+  if (tile.dataset.pickLib) applyLibraryPick(tile.dataset.pickLib);
+  else openItemModal(tile);
+});
+
+// ---------------------------------------------------------------- item forms
 
 function slotIds(form, kind) {
   const edit = form === "edit";
@@ -852,7 +1421,7 @@ function applyLibraryPick(id) {
 
 function renderPickerGrid() {
   if (!pickerSlot) return;
-  const rows = ((lastState && lastState.library) || []).filter((row) => row.kind === pickerSlot.kind);
+  const rows = (lastState.library || []).filter((row) => row.kind === pickerSlot.kind);
   $("library-picker-grid").innerHTML = rows.map((row) => libraryCard(row, { pick: true })).join("");
   $("library-picker-empty").hidden = rows.length > 0;
 }
@@ -863,7 +1432,7 @@ async function showLibraryPicker(key) {
   $("library-picker-file").value = "";
   $("library-picker-title").textContent =
     pickerSlot.kind === "news" ? "Chọn ảnh báo từ thư viện" : "Chọn ảnh shop từ thư viện";
-  if (!lastState.library) lastState = await api("/api/state");
+  if (!lastState.library) lastState = { ...lastState, ...(await api("/api/state")) };
   renderPickerGrid();
   $("library-picker").showModal();
 }
@@ -890,7 +1459,6 @@ $("library-picker-file").addEventListener("change", async (ev) => {
         image: await fileToDataUrl(file),
       }),
     });
-    lastState = state;
     render(state);
     applyLibraryPick(state.saved.id);
     toast(state.saved.duplicate ? "Đã có icon giống, dùng lại" : "Đã thêm vào thư viện");
@@ -899,34 +1467,25 @@ $("library-picker-file").addEventListener("change", async (ev) => {
   }
 });
 
-$("item-file").addEventListener("change", async (ev) => {
-  const file = ev.target.files[0];
-  $("item-shop-lib").value = "";
+async function previewFile(input, img, libInput, onDone) {
+  const file = input.files[0];
+  libInput.value = "";
   if (!file) {
-    $("item-preview-img").removeAttribute("src");
-    $("item-preview-img").hidden = true;
-    syncItemPreview();
-    return;
-  }
-  $("item-preview-img").src = await fileToDataUrl(file);
-  $("item-preview-img").hidden = false;
-  syncItemPreview();
-});
-
-$("item-news-file").addEventListener("change", async (ev) => {
-  const file = ev.target.files[0];
-  $("item-news-lib").value = "";
-  const img = $("item-news-preview-img");
-  if (!file) {
-    img.hidden = true;
     img.removeAttribute("src");
-    syncItemPreview();
-    return;
+    img.hidden = true;
+  } else {
+    img.src = await fileToDataUrl(file);
+    img.hidden = false;
   }
-  img.src = await fileToDataUrl(file);
-  img.hidden = false;
-  syncItemPreview();
-});
+  if (onDone) onDone();
+}
+
+$("item-file").addEventListener("change", () =>
+  previewFile($("item-file"), $("item-preview-img"), $("item-shop-lib"), syncItemPreview),
+);
+$("item-news-file").addEventListener("change", () =>
+  previewFile($("item-news-file"), $("item-news-preview-img"), $("item-news-lib"), syncItemPreview),
+);
 
 $("item-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -941,7 +1500,7 @@ $("item-form").addEventListener("submit", async (ev) => {
     if (news) body.news_image = await fileToDataUrl(news);
     if (shopLib && !shop) body.shop_library = shopLib;
     if (newsLib && !news) body.news_library = newsLib;
-    await api("/api/items", {
+    const state = await api("/api/items", {
       method: "POST",
       body: JSON.stringify(body),
     });
@@ -951,8 +1510,9 @@ $("item-form").addEventListener("submit", async (ev) => {
     $("item-preview").hidden = true;
     $("item-preview-img").hidden = true;
     $("item-news-preview-img").hidden = true;
-    toast("Đã lưu item");
-    await refresh();
+    imgVersion = Date.now();
+    render(state);
+    toast(`Đã lưu ${state.item ? state.item.id : "item"}`);
   } catch (err) {
     toast(err.message, true);
   }
@@ -969,14 +1529,14 @@ function openItemModal(tile) {
   const shop = $("item-edit-preview");
   const news = $("item-edit-news-preview");
   if (tile.dataset.hasImage) {
-    shop.src = `/api/templates/${tile.dataset.template}.png?t=${Date.now()}`;
+    shop.src = templateUrl(tile.dataset.template);
     shop.hidden = false;
   } else {
     shop.removeAttribute("src");
     shop.hidden = true;
   }
   if (tile.dataset.hasNews) {
-    news.src = `/api/templates/${tile.dataset.newsTemplate}.png?t=${Date.now()}`;
+    news.src = templateUrl(tile.dataset.newsTemplate);
     news.hidden = false;
   } else {
     news.removeAttribute("src");
@@ -990,22 +1550,28 @@ $("item-modal").addEventListener("click", (ev) => {
   if (ev.target === $("item-modal")) $("item-modal").close();
 });
 
-$("item-edit-file").addEventListener("change", async (ev) => {
-  const file = ev.target.files[0];
-  $("item-edit-shop-lib").value = "";
-  const img = $("item-edit-preview");
-  if (!file) return;
-  img.src = await fileToDataUrl(file);
-  img.hidden = false;
+$("item-edit-file").addEventListener("change", () => {
+  if ($("item-edit-file").files[0]) previewFile($("item-edit-file"), $("item-edit-preview"), $("item-edit-shop-lib"));
+});
+$("item-edit-news-file").addEventListener("change", () => {
+  if ($("item-edit-news-file").files[0]) previewFile($("item-edit-news-file"), $("item-edit-news-preview"), $("item-edit-news-lib"));
 });
 
-$("item-edit-news-file").addEventListener("change", async (ev) => {
-  const file = ev.target.files[0];
-  $("item-edit-news-lib").value = "";
-  const img = $("item-edit-news-preview");
-  if (!file) return;
-  img.src = await fileToDataUrl(file);
-  img.hidden = false;
+$("item-edit-delete").addEventListener("click", async () => {
+  const id = $("item-edit-old").value;
+  const ok = await confirmDialog({
+    title: "Xoá vật phẩm?",
+    message: `Xoá ${id} khỏi wishlist cùng 2 ảnh template của nó. Ảnh trong thư viện vẫn giữ.`,
+  });
+  if (!ok) return;
+  try {
+    const state = await api(`/api/items/${encodeURIComponent(id)}`, { method: "DELETE" });
+    $("item-modal").close();
+    render(state);
+    toast(`Đã xoá ${id}`);
+  } catch (err) {
+    toast(err.message, true);
+  }
 });
 
 $("item-edit-form").addEventListener("submit", async (ev) => {
@@ -1021,13 +1587,14 @@ $("item-edit-form").addEventListener("submit", async (ev) => {
     if (news) body.news_image = await fileToDataUrl(news);
     if (shopLib && !shop) body.shop_library = shopLib;
     if (newsLib && !news) body.news_library = newsLib;
-    await api(`/api/items/${oldId}`, {
+    const state = await api(`/api/items/${encodeURIComponent(oldId)}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     });
     $("item-modal").close();
+    imgVersion = Date.now();
+    render(state);
     toast("Đã cập nhật vật phẩm");
-    await refresh();
   } catch (err) {
     toast(err.message, true);
   }
@@ -1062,10 +1629,11 @@ $("crop-form").addEventListener("submit", async (ev) => {
       storage: $("crop-storage").value,
     };
     if (file) body.image = await fileToDataUrl(file);
-    await api("/api/crops", { method: "POST", body: JSON.stringify(body) });
+    const state = await api("/api/crops", { method: "POST", body: JSON.stringify(body) });
     $("crop-form").reset();
+    imgVersion = Date.now();
+    render(state);
     toast("Đã lưu cây trồng");
-    await refresh();
   } catch (err) {
     toast(err.message, true);
   }
@@ -1085,7 +1653,6 @@ $("config-form").addEventListener("submit", async (ev) => {
         template_threshold: Number($("template_threshold").value),
         buy_threshold: Number($("buy_threshold").value),
         news_threshold: Number($("news_threshold").value),
-        loop_rest_min: Number($("loop_rest_min").value),
         action_wait_s: Number($("action_wait_s").value),
         buy_wait_s: Number($("buy_wait_s").value),
         visit_wait_s: Number($("visit_wait_s").value),
@@ -1095,6 +1662,7 @@ $("config-form").addEventListener("submit", async (ev) => {
         debug: $("debug").checked,
       }),
     });
+    setConfigDirty(false);
     toast("Đã lưu cấu hình");
     await refresh();
   } catch (err) {
@@ -1103,33 +1671,27 @@ $("config-form").addEventListener("submit", async (ev) => {
 });
 
 document.body.addEventListener("change", async (ev) => {
-  const wait = ev.target.closest("[data-wait-idx]");
-  if (wait) {
-    try {
-      const state = await api(`/api/macros/record/steps/${wait.dataset.waitIdx}`, {
-        method: "PATCH",
-        body: JSON.stringify({ ms: Number(wait.value) || 0 }),
-      });
-      lastStepsKey = "";
-      renderMacros(state);
-    } catch (err) {
-      toast(err.message, true);
-    }
-    return;
-  }
   const toggle = ev.target.closest("[data-toggle]");
   if (!toggle) return;
   try {
-    await api(`/api/items/${toggle.dataset.toggle}`, {
+    const state = await api(`/api/items/${encodeURIComponent(toggle.dataset.toggle)}`, {
       method: "PATCH",
       body: JSON.stringify({ enabled: toggle.checked }),
     });
+    render(state);
   } catch (err) {
     toast(err.message, true);
     toggle.checked = !toggle.checked;
   }
 });
 
+// ---------------------------------------------------------------- boot
+
+showPage(pageFromPath(location.pathname), false);
+syncNotifyBtn();
 refresh()
-  .then((_) => schedulePoll(false))
-  .catch((err) => toast(err.message, true));
+  .then(() => schedulePoll())
+  .catch((err) => {
+    toast(err.message, true);
+    schedulePoll();
+  });

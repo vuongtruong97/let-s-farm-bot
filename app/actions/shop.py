@@ -67,6 +67,8 @@ STALL_CREEP_PX = 40.0
 FAILURE_FRAMES_KEPT = 10
 # popup_close matched the paper's X at 0.88-0.95 on every page and the cover.
 PAPER_X_THRESHOLD = 0.8
+# Taps on the mailbox that land open the paper in 2-3s.
+OPEN_TAP_WAIT_S = 5.0
 # A friend's farm has taken 13-36s to load (the game shows "Connecting.."
 # when the network is slow); the home farm ~5s. Polls return as soon as the
 # screen is there, so this is only a ceiling.
@@ -676,6 +678,7 @@ class NewspaperActions:
             stand = self.news.find_stand(png)
             if stand is None:
                 log.info("FIND_COLUMN FAIL stand not on screen after pan")
+                self._keep_failure_frame(png, "column_fail")
                 return ActionResult(False, action, "newspaper stand not found")
             return self._remember_stand(action, stand)
 
@@ -684,18 +687,23 @@ class NewspaperActions:
         # Opening the paper is a screen transition, so it gets the screen
         # ceiling: one screencap can outlast action_wait_s on its own, which
         # would leave the poll with a single look taken before the paper drew.
-        deadline = self.visit_wait_s
+        # The paper draws 2-3s after a tap that lands; a tap that missed is
+        # better retried elsewhere on the box than waited on.
+        deadline = min(self.visit_wait_s, OPEN_TAP_WAIT_S)
+        tried: list[tuple[int, int]] = []
         with self.timing.step("open_newspaper", deadline_s=deadline):
             cached = load_column()
             if cached is not None:
                 action.x, action.y = cached
                 self._tap(*cached)
-                _, opened = self._poll_until(
+                tried.append(tuple(cached))
+                after, opened = self._poll_until(
                     self._newspaper_is_open, deadline, step="open_newspaper"
                 )
                 if opened:
                     return self._opened_at_first_spread(action)
                 log.info("FIND_COLUMN cache miss — searching")
+                self._keep_failure_frame(after, "open_miss")
                 clear_column()
             # close_shop already captured the farm behind the stall.
             png, _ = self._take_pending()
@@ -705,15 +713,24 @@ class NewspaperActions:
             stand = self.news.find_stand(png)
             if stand is None:
                 return ActionResult(False, action, "newspaper stand not on screen")
-            action.x, action.y = _center(stand)
-            save_column(*_center(stand))
-            self._tap(*_center(stand))
-            after, opened = self._poll_until(
-                self._newspaper_is_open, deadline, step="open_newspaper"
-            )
+            # A second spot on the box rather than the same tap again: an
+            # animal or decoration in front of one spot takes the tap instead.
+            after = png
+            for point in _stand_points(stand):
+                if any(abs(point[0] - x) + abs(point[1] - y) < 20 for x, y in tried):
+                    continue  # that spot already failed a moment ago
+                tried.append(point)
+                action.x, action.y = point
+                self._tap(*point)
+                after, opened = self._poll_until(
+                    self._newspaper_is_open, deadline, step="open_newspaper"
+                )
+                if opened:
+                    save_column(*point)
+                    return self._opened_at_first_spread(action)
+                log.info(f"OPEN_NEWSPAPER no paper after tapping {point[0]},{point[1]}")
+                self._keep_failure_frame(after, "open_miss")
             self._debug_shot(after, None, "after_open_newspaper.png")
-            if opened:
-                return self._opened_at_first_spread(action)
             clear_column()
             self._keep_failure_frame(after, "open_fail")
             return ActionResult(False, action, "newspaper did not open")
@@ -723,7 +740,7 @@ class NewspaperActions:
         return ActionResult(True, action)
 
     def _remember_stand(self, action: Action, stand: DetectedObject) -> ActionResult:
-        action.x, action.y = _center(stand)
+        action.x, action.y = _stand_points(stand)[0]
         save_column(action.x, action.y)
         log.info(f"FIND_COLUMN saved {action.x},{action.y}")
         return ActionResult(True, action)
@@ -1362,8 +1379,18 @@ def _spread_left(page: int) -> int:
     return page if page % 2 == 0 else page - 1
 
 
-def _center(obj: DetectedObject) -> tuple[int, int]:
-    return obj.x + obj.width // 2, obj.y + obj.height // 2
+# Where to tap the mailbox, as fractions of the newspaper_stand match (117x188:
+# box on a post). The rolled paper first, the metal top by the flag as the
+# fallback: the metal top missed a few times a day on live farms while the
+# paper opened it. Both stay clear of the post, where pets and gnomes stand.
+STAND_TAP_POINTS = ((0.35, 0.45), (0.62, 0.22))
+
+
+def _stand_points(stand: DetectedObject) -> list[tuple[int, int]]:
+    return [
+        (stand.x + int(round(fx * stand.width)), stand.y + int(round(fy * stand.height)))
+        for fx, fy in STAND_TAP_POINTS
+    ]
 
 
 def _slot_skipped(slot: ShopSlot, skipped: list[ShopSlot]) -> bool:
