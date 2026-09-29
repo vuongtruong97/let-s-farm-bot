@@ -32,7 +32,7 @@
   "so_do": {
     "template": "item_so_do",
     "news_template": "item_so_do_news",
-    "enabled": false
+    "enabled": true
   },
   "bua_mo_rong_dat": {
     "template": "item_bua_mo_rong_dat",
@@ -57,7 +57,7 @@
   "cua": {
     "template": "item_cua",
     "news_template": "item_cua_news",
-    "enabled": true
+    "enabled": false
   },
   "ao": {
     "template": "item_ao",
@@ -94,11 +94,6 @@
     "news_template": "item_bong_ngo_cay_news",
     "enabled": false
   },
-  "thanh_bac": {
-    "template": "item_thanh_bac",
-    "news_template": "item_thanh_bac_news",
-    "enabled": false
-  },
   "bu_long": {
     "template": "item_bu_long",
     "news_template": "item_bu_long_news",
@@ -127,7 +122,7 @@
   "duong_trang": {
     "template": "item_duong_trang",
     "news_template": "item_duong_trang_news",
-    "enabled": false
+    "enabled": true
   },
   "bat_kem": {
     "template": "item_bat_kem",
@@ -143,11 +138,6 @@
     "template": "item_tnt",
     "news_template": "item_tnt_news",
     "enabled": true
-  },
-  "ngo_cay": {
-    "template": "item_ngo_cay",
-    "news_template": "item_ngo_cay_news",
-    "enabled": false
   },
   "nuoc_ep_ca_rot": {
     "template": "item_nuoc_ep_ca_rot",
@@ -177,6 +167,26 @@
   "bang_dinh": {
     "template": "item_bang_dinh",
     "news_template": "item_bang_dinh_news",
+    "enabled": false
+  },
+  "min": {
+    "template": "item_min",
+    "news_template": "item_min_news",
+    "enabled": true
+  },
+  "banh_ca_rot": {
+    "template": "item_banh_ca_rot",
+    "news_template": "item_banh_ca_rot_news",
+    "enabled": false
+  },
+  "dinh_hop": {
+    "template": "item_dinh_hop",
+    "news_template": "item_dinh_hop_news",
+    "enabled": false
+  },
+  "siro": {
+    "template": "item_siro",
+    "news_template": "item_siro_news",
     "enabled": true
   }
 }

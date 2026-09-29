@@ -155,6 +155,15 @@ class ScreenDetector:
         )
 
 
+def popup_close_point(screen: ScreenDetection) -> tuple[int, int] | None:
+    """Centre of the most confident popup X, or None to fall back to Back."""
+    closes = [o for o in screen.objects if o.type == "popup" and o.state == "close"]
+    if not closes:
+        return None
+    close = max(closes, key=lambda o: o.confidence)
+    return close.x + close.width // 2, close.y + close.height // 2
+
+
 def _decide(screen: GameScreen, confidence: float, objects) -> ScreenDetection:
     result = ScreenDetection(screen, confidence, objects)
     _log(result)

@@ -93,6 +93,8 @@ HUD_TAPS: dict[str, RelPoint] = {
     "hud_friends": RelPoint(0.961, 0.931),
     "friends_first": RelPoint(0.848, 0.931),
     "shop_close": RelPoint(0.921, 0.088),
+    # The paper's X: same spot on every page, cover included. Not the stall's.
+    "newspaper_close": RelPoint(1689 / 1920, 126 / 1080),
     "shop_home": RelPoint(0.047, 0.912),
 }
 

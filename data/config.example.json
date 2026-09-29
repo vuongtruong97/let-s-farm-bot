@@ -7,5 +7,6 @@
   "package": "",
   "template_threshold": 0.80,
   "buy_threshold": 0.72,
-  "news_threshold": 0.72
+  "news_threshold": 0.72,
+  "screencap_raw": true
 }

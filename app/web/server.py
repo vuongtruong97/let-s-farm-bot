@@ -367,6 +367,7 @@ def _config_dict(config: AppConfig | None = None) -> dict:
         "visit_wait_s": cfg.visit_wait_s,
         "poll_interval_s": cfg.poll_interval_s,
         "stall_swipe_ms": cfg.stall_swipe_ms,
+        "screencap_raw": cfg.screencap_raw,
     }
 
 
@@ -426,6 +427,7 @@ def _save_config(payload: dict) -> dict:
         visit_wait_s=visit_wait_s,
         poll_interval_s=poll_interval_s,
         stall_swipe_ms=stall_swipe_ms,
+        screencap_raw=bool(payload.get("screencap_raw", current.screencap_raw)),
     )
     save_config(updated)
     return _config_dict(updated)

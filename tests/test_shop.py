@@ -869,6 +869,40 @@ def test_edge_is_only_called_after_a_second_swipe(tmp_path, no_sleep, monkeypatc
     assert _swipes(device) == [_pan("right"), _pan("right")]
 
 
+def test_mid_leg_still_swipe_is_the_edge_at_once(tmp_path, no_sleep, monkeypatch):
+    """Past a leg's first swipe the game takes swipes, so a table that stays
+    put is against its stop and a second push would only cost time."""
+    start = _stall_window(0)
+    device, actions = _stall_actions(tmp_path, monkeypatch, [start])
+    pan = actions._stall_pan(start, "right", confirm=False)
+    assert pan.moved is False
+    assert _swipes(device) == [_pan("right")]
+
+
+def test_whole_column_pan_read_as_a_small_shift_still_counts(
+    tmp_path, no_sleep, monkeypatch
+):
+    """Phase correlation on look-alike crates reads a pan of whole columns as a
+    few px. Other crates in view is what gives it away."""
+    start = _stall_window(0)
+    device, actions = _stall_actions(tmp_path, monkeypatch, [_stall_window(534)])
+    monkeypatch.setattr("app.actions.shop.crate_view_shift", lambda a, b: 3.0)
+    pan = actions._stall_pan(start, "right", confirm=False)
+    assert pan.moved is True
+
+
+def test_view_residual_ignores_sparkle_but_not_a_pan():
+    from app.vision.newspaper import SAME_VIEW_RESIDUAL, stall_view_residual
+
+    still = _stall_window(0)
+    speckled = still.copy()
+    rng = np.random.default_rng(7)
+    speckled[rng.integers(330, 840, 40000), rng.integers(374, 1554, 40000)] = 255
+    assert stall_view_residual(still, speckled, 0.0) < SAME_VIEW_RESIDUAL
+    assert stall_view_residual(still, _stall_window(25), 25.0) < SAME_VIEW_RESIDUAL
+    assert stall_view_residual(still, _stall_window(534), 0.0) >= SAME_VIEW_RESIDUAL
+
+
 def test_creeping_against_the_edge_is_not_a_new_window(
     tmp_path, no_sleep, monkeypatch
 ):
@@ -884,20 +918,23 @@ def test_creeping_against_the_edge_is_not_a_new_window(
 
 
 def test_cloth_at_the_edge_tells_a_stall_that_cannot_pan():
-    """A stall too wide for the window keeps a crate clipped against the frame,
-    and that crate hides the cloth. Bare cloth means nothing is hidden there."""
-    from app.vision.newspaper import MIN_CLOTH_SHARE, stall_edge_cloth
+    """Wider bare cloth than one crate gap next to a post means nothing is
+    hidden there. A gap's worth of cloth proves nothing: mid-table shows the
+    same whenever a gap lines up with the post."""
+    from app.vision.newspaper import stall_end_cloth, stall_end_in_view
 
     fits = _bgr(STALL_FITS)
-    assert stall_edge_cloth(fits, "left") >= MIN_CLOTH_SHARE
-    assert stall_edge_cloth(fits, "right") >= MIN_CLOTH_SHARE
-    # This one opened mid-table: the left column is cut off by the frame.
+    assert stall_end_in_view(fits, "left")
+    assert stall_end_in_view(fits, "right")
+    # This one opened mid-table: the left column is cut off by the frame, and
+    # the right shows a crate gap of cloth, not a proven end.
     clipped = _bgr(STALL_CLIPPED)
-    assert stall_edge_cloth(clipped, "left") < MIN_CLOTH_SHARE
-    assert stall_edge_cloth(clipped, "right") >= MIN_CLOTH_SHARE
+    assert not stall_end_in_view(clipped, "left")
+    assert 0 < stall_end_cloth(clipped, "right") < 60
+    assert not stall_end_in_view(clipped, "right")
     wide = _bgr(PLAYER_SHOP)
-    assert stall_edge_cloth(wide, "left") < MIN_CLOTH_SHARE
-    assert stall_edge_cloth(wide, "right") < MIN_CLOTH_SHARE
+    assert not stall_end_in_view(wide, "left")
+    assert not stall_end_in_view(wide, "right")
 
 
 def test_a_stall_that_fits_the_window_costs_no_swipe(tmp_path, no_sleep, monkeypatch):
@@ -942,9 +979,9 @@ def test_a_clipped_column_is_still_panned_to(tmp_path, no_sleep, monkeypatch):
     )
     actions.buy_wishlist()
     # A crate covers the cloth on the left, so that column gets rewound to.
-    # The right end shows cloth, so the sweep never probes it.
+    # The right shows no more cloth than a crate gap, so it is probed too.
     assert _pan("left") in _swipes(device)
-    assert _pan("right") not in _swipes(device)
+    assert _pan("right") in _swipes(device)
 
 
 def test_rewind_measures_its_way_to_the_left_edge(tmp_path, no_sleep, monkeypatch):
@@ -956,8 +993,9 @@ def test_rewind_measures_its_way_to_the_left_edge(tmp_path, no_sleep, monkeypatc
         [_stall_window(120), _stall_window(0), _stall_window(0)],
     )
     edge = actions._stall_rewind(_stall_window(300))
-    # Two swipes carried it back 180px then 120px, and a pair found the edge.
-    assert _swipes(device) == [_pan("left")] * 4
+    # Two swipes carried it back 180px then 120px. Mid-leg, one still swipe is
+    # the edge: only a leg's first swipe gets asked twice.
+    assert _swipes(device) == [_pan("left")] * 3
     assert crate_view_shift(_stall_window(0), edge) == pytest.approx(0, abs=3)
     assert actions.timing.snapshot()["steps"]["stall_rewind"]["n"] == 3
 
@@ -981,8 +1019,8 @@ def test_stall_is_rewound_before_the_first_look(tmp_path, no_sleep, monkeypatch)
 
     monkeypatch.setattr(actions.news, "find_slots", spy)
     actions.buy_wishlist()
-    # One pan carried it home, then a pair confirmed the edge.
-    assert swipes_before_first_look == [_pan("left")] * 3
+    # One pan carried it home, then one still swipe was the edge.
+    assert swipes_before_first_look == [_pan("left")] * 2
 
 
 def test_crate_left_of_the_opening_window_is_bought(tmp_path, no_sleep, monkeypatch):
@@ -1163,10 +1201,29 @@ def test_sweep_buys_a_crate_in_every_window(tmp_path, no_sleep, monkeypatch):
     assert _pan("right") in _swipes(device)
 
 
-def test_go_home_taps_fixed_hud_points(no_sleep):
+def _friend_farm() -> "np.ndarray":
+    """A friend's farm: the same HUD, but no cart bottom-left (a house there)."""
+    view = _bgr(FARM)
+    h, w = view.shape[:2]
+    view[int(h * 0.78) :, : int(w * 0.14)] = (60, 140, 60)
+    return view
+
+
+def test_go_home_follows_the_screens_it_is_shown(no_sleep):
+    """Loading, the friend's stall that opens on arrival, the friend's farm,
+    then home: each tap waits for the screen it is meant for."""
     from app.vision.regions import hud_tap
 
-    device = FakeDevice([_png_bytes(_bgr(FARM))])
+    device = FakeDevice(
+        [
+            _png_bytes(_bgr(FARM)),
+            _png_bytes(_bgr(FIXTURES / "unknown.png")),
+            _png_bytes(_bgr(PLAYER_SHOP)),
+            _png_bytes(_friend_farm()),
+            _png_bytes(_bgr(FIXTURES / "unknown.png")),
+            _png_bytes(_bgr(FARM)),
+        ]
+    )
     actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
     result = actions.go_home()
     assert result.success
@@ -1178,6 +1235,14 @@ def test_go_home_taps_fixed_hud_points(no_sleep):
         hud_tap("shop_close", width, height),
         hud_tap("shop_home", width, height),
     ]
+
+
+def test_a_friends_farm_is_not_home():
+    device = FakeDevice([_png_bytes(_bgr(FARM))])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    assert actions._where(_bgr(FARM)) == "home"
+    assert actions._where(_friend_farm()) == "friend"
+    assert actions._where(_bgr(PLAYER_SHOP)) == "stall"
 
 
 def test_close_shop_taps_fixed_point_and_hands_frame_over(no_sleep):
@@ -1331,6 +1396,11 @@ def _stub_news_loop(actions, monkeypatch):
     )
     monkeypatch.setattr(
         actions,
+        "close_newspaper",
+        lambda png=None: ActionResult(True, Action("CLOSE_NEWSPAPER", "newspaper")),
+    )
+    monkeypatch.setattr(
+        actions,
         "visit_shop",
         lambda ad: visited.append(ad) or ActionResult(True, Action("VISIT_SHOP", "ad")),
     )
@@ -1436,7 +1506,7 @@ def test_unchanged_newspaper_seeks_next_cell_without_rescanning(no_sleep, monkey
     monkeypatch.setattr(
         actions,
         "_turn_newspaper",
-        lambda: turns.append(actions._news_left_page)
+        lambda settle=True: turns.append(actions._news_left_page)
         or setattr(
             actions,
             "_news_left_page",
@@ -1572,7 +1642,7 @@ def test_first_open_scans_all_pages_once(no_sleep, monkeypatch):
     monkeypatch.setattr(
         actions,
         "_turn_newspaper",
-        lambda: turns.append(actions._news_left_page)
+        lambda settle=True: turns.append(actions._news_left_page)
         or setattr(
             actions,
             "_news_left_page",
@@ -1648,17 +1718,6 @@ def test_visited_still_dim_follows_the_grey_cards(no_sleep):
     assert actions._visited_still_dim(_bgr(NEWSPAPER)) is False
 
 
-def test_unused_coin_ad_skips_visited_cells(no_sleep, monkeypatch):
-    ad = DetectedObject("newspaper", 600, 453, 340, 260, 1.0, "ad")
-    device = FakeDevice([])
-    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
-    monkeypatch.setattr(actions.news, "find_ads", lambda png, left_page=2: [ad])
-    monkeypatch.setattr(actions, "_ad_cell", lambda _ad: (2, 1))
-    assert actions._unused_coin_ad(None) is ad
-    actions._visited_ads.add((2, 1))
-    assert actions._unused_coin_ad(None) is None
-
-
 def test_cli_detect_newspaper(capsys):
     assert main(["detect", str(NEWSPAPER)]) == 0
     out = capsys.readouterr().out
@@ -1700,6 +1759,9 @@ def test_browse_scans_ads_without_visiting_shop(tmp_path, no_sleep, monkeypatch)
             _png_bytes(_bgr(NEWSPAPER)),
             _png_bytes(farm),
             _png_bytes(_bgr(NEWSPAPER)),
+            _png_bytes(_bgr(NEWSPAPER)),
+            # The paper's X was tapped: the farm is back.
+            _png_bytes(farm),
         ]
     )
     actions = NewspaperActions(
@@ -1826,3 +1888,209 @@ def test_visit_next_shop_taps_wishlist_ad(no_sleep, tmp_path, monkeypatch):
     assert result.success
     assert result.action.type == "VISIT_SHOP"
     assert device.taps
+
+
+def test_failure_frame_is_kept_and_pruned(tmp_path, no_sleep, monkeypatch):
+    import app.actions.shop as shop_mod
+
+    monkeypatch.setattr(shop_mod, "SCREENSHOT_DIR", tmp_path)
+    monkeypatch.setattr(shop_mod, "FAILURE_FRAMES_KEPT", 2)
+    folder = tmp_path / "debug"
+    folder.mkdir()
+    for name in ("open_fail_20000101_000000.png", "open_fail_20000101_000001.png"):
+        (folder / name).write_bytes(b"old")
+    actions = NewspaperActions(FakeDevice([]), AppConfig(debug=False), wait_s=0)
+    actions._keep_failure_frame(np.zeros((6, 8, 3), dtype=np.uint8), "open_fail")
+    kept = sorted(p.name for p in folder.glob("open_fail_*.png"))
+    assert len(kept) == 2
+    assert kept[0] == "open_fail_20000101_000001.png"
+    assert (folder / kept[1]).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_seeking_a_far_page_swipes_back_to_back_and_waits_once(no_sleep, monkeypatch):
+    device = FakeDevice([])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0.9, visit_wait_s=0)
+    actions._planned_ads = [(10, 2)]
+    actions._news_left_page = 2
+    events: list[str] = []
+    monkeypatch.setattr(actions, "_swipe_next_pages", lambda: events.append("swipe"))
+    monkeypatch.setattr(actions, "_sleep", lambda s: events.append(f"sleep{s:g}"))
+    ad = actions._seek_next_planned()
+    assert events == ["swipe"] * 4 + ["sleep0.9"]
+    assert actions._news_left_page == NEWS_PAGE_COUNT
+    assert actions._ad_cell(ad) == (10, 2)
+
+
+def test_close_newspaper_taps_the_papers_own_x(no_sleep):
+    """The paper's X is not where the stall's is; the stall's point misses it."""
+    from app.vision.regions import hud_tap
+
+    device = FakeDevice([_png_bytes(_bgr(NEWSPAPER)), _png_bytes(_bgr(FARM))])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    result = actions.close_newspaper()
+    assert result.success
+    width, height = device.resolution()
+    assert device.taps == [hud_tap("newspaper_close", width, height)]
+    assert hud_tap("shop_close", width, height) not in device.taps
+    assert device.backs == 0
+
+
+def test_close_newspaper_never_taps_blind_on_the_farm(no_sleep):
+    """That spot on the farm sits by the coin and diamond counters."""
+    device = FakeDevice([_png_bytes(_bgr(FARM))])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    assert actions.close_newspaper().success
+    assert device.taps == []
+
+
+def test_close_newspaper_reports_a_paper_that_stays_open(no_sleep):
+    device = FakeDevice([_png_bytes(_bgr(NEWSPAPER))])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    result = actions.close_newspaper()
+    assert not result.success
+    assert result.error == "newspaper still open"
+    assert device.backs == 0
+
+
+def test_go_home_closes_an_open_paper_first(no_sleep):
+    from app.vision.regions import hud_tap
+
+    device = FakeDevice(
+        [
+            _png_bytes(_bgr(NEWSPAPER)),
+            _png_bytes(_bgr(FARM)),
+            _png_bytes(_bgr(FARM)),
+            _png_bytes(_friend_farm()),
+            _png_bytes(_bgr(FARM)),
+        ]
+    )
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    result = actions.go_home()
+    assert result.success
+    width, height = device.resolution()
+    assert device.taps[0] == hud_tap("newspaper_close", width, height)
+    assert device.taps[1] == hud_tap("hud_friends", width, height)
+
+
+def test_go_home_fails_when_the_farm_never_draws(no_sleep, monkeypatch):
+    monkeypatch.setattr("app.actions.shop.GO_HOME_LOAD_S", 0)
+    device = FakeDevice([_png_bytes(_bgr(FARM)), _png_bytes(_bgr(FIXTURES / "unknown.png"))])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    result = actions.go_home()
+    assert not result.success
+    assert result.error == "farm not drawn"
+
+
+def test_popup_without_x_is_left_alone_not_backed_out_of(no_sleep):
+    """Back opens the game's exit dialog instead of closing anything."""
+    from app.vision.screen import GameScreen, ScreenDetection
+
+    device = FakeDevice([_png_bytes(_bgr(FARM))])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    actions._close_popup(ScreenDetection(GameScreen.POPUP, 0.9, []))
+    assert device.backs == 0
+    assert device.taps == []
+
+
+def test_finished_paper_is_closed_before_going_home(no_sleep, monkeypatch):
+    from app.actions.farming import Action, ActionResult
+
+    device = FakeDevice([])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    _stub_news_loop(actions, monkeypatch)
+    order: list[str] = []
+    monkeypatch.setattr(
+        actions,
+        "close_newspaper",
+        lambda png=None: order.append("close_paper")
+        or ActionResult(True, Action("CLOSE_NEWSPAPER", "newspaper")),
+    )
+    monkeypatch.setattr(
+        actions,
+        "go_home",
+        lambda: order.append("home") or ActionResult(True, Action("GO_HOME", "house")),
+    )
+    monkeypatch.setattr(actions, "_next_listing", lambda _mode: None)
+    result = actions.shop_from_newspaper(
+        limit=1, mode="sweep", reset_home=False, until_done=True
+    )
+    assert result.error == "all shops done"
+    assert order == ["close_paper", "home"]
+
+
+def test_a_stall_is_never_taken_for_the_paper():
+    """The stall's X is the same art ~85px from the paper's. Mistaking one for
+    the other tapped the awning all night and the bot never got home."""
+    device = FakeDevice([_png_bytes(_bgr(FARM))])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    for stall in (PLAYER_SHOP, STALL_FITS, STALL_CLIPPED):
+        assert not actions._paper_x_visible(_bgr(stall))
+    assert actions._paper_x_visible(_bgr(NEWSPAPER))
+
+
+def test_go_home_closes_an_open_stall_with_the_stalls_x(no_sleep):
+    from app.vision.regions import hud_tap
+
+    device = FakeDevice(
+        [
+            _png_bytes(_bgr(PLAYER_SHOP)),
+            _png_bytes(_bgr(FARM)),
+            _png_bytes(_bgr(FARM)),
+            _png_bytes(_friend_farm()),
+            _png_bytes(_bgr(FARM)),
+        ]
+    )
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    result = actions.go_home()
+    assert result.success
+    width, height = device.resolution()
+    assert device.taps[0] == hud_tap("shop_close", width, height)
+    assert hud_tap("newspaper_close", width, height) not in device.taps
+
+
+def test_go_home_waits_for_a_closing_stall_to_go(no_sleep):
+    """The stall still shows for a frame or two after its X is tapped; reading
+    that as "still open" gave up on a stall that was closing fine."""
+    from app.vision.regions import hud_tap
+
+    device = FakeDevice(
+        [
+            _png_bytes(_bgr(FARM)),
+            _png_bytes(_bgr(PLAYER_SHOP)),  # friend's stall on arrival
+            _png_bytes(_bgr(PLAYER_SHOP)),  # still drawing after the tap
+            _png_bytes(_bgr(PLAYER_SHOP)),
+            _png_bytes(_friend_farm()),
+            _png_bytes(_bgr(FARM)),
+        ]
+    )
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=5)
+    result = actions.go_home()
+    assert result.success
+    width, height = device.resolution()
+    assert device.taps.count(hud_tap("shop_close", width, height)) == 1
+    assert device.taps[-1] == hud_tap("shop_home", width, height)
+
+
+def test_go_home_from_another_farm_skips_the_friend_visit(no_sleep):
+    """On someone else's farm the house button is one tap away; visiting a
+    friend first only adds a slow load."""
+    from app.vision.regions import hud_tap
+
+    device = FakeDevice(
+        [_png_bytes(_friend_farm()), _png_bytes(_friend_farm()), _png_bytes(_bgr(FARM))]
+    )
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    result = actions.go_home()
+    assert result.success
+    width, height = device.resolution()
+    assert device.taps == [hud_tap("shop_home", width, height)]
+
+
+def test_visit_keeps_waiting_while_the_farm_loads(no_sleep):
+    """A slow network keeps the loading screen up past visit_wait_s; the stall
+    that follows is still the visit's, not a failure."""
+    loading = _png_bytes(_bgr(FIXTURES / "unknown.png"))
+    device = FakeDevice([loading, loading, loading, _png_bytes(_bgr(PLAYER_SHOP))])
+    actions = NewspaperActions(device, AppConfig(debug=False), wait_s=0, visit_wait_s=0)
+    ad = DetectedObject("newspaper", 230, 173, 340, 260, 1.0, "ad")
+    assert actions.visit_shop(ad).success

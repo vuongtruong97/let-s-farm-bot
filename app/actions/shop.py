@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from typing import NamedTuple
 
 from app.actions.farming import Action, ActionResult
 from app.actions.timing import LoopTiming
 from app.config import SCREENSHOT_DIR, AppConfig
 from app.controller.camera import CameraManager
-from app.controller.device import DeviceController
+from app.controller.device import DeviceController, frame_png_bytes
 from app.storage.botdata import (
     active_wishlist,
     clear_column,
@@ -21,9 +22,9 @@ from app.storage.botdata import (
     save_library_png,
 )
 from app.storage.logger import get_logger
-from app.vision.detector import DetectedObject
+from app.vision.detector import DetectedObject, box_iou
 from app.vision.newspaper import (
-    MIN_CLOTH_SHARE,
+    SAME_VIEW_RESIDUAL,
     NewspaperDetector,
     ShopSlot,
     ad_cell_is_dim,
@@ -32,7 +33,9 @@ from app.vision.newspaper import (
     crate_view_shift,
     newspaper_fingerprint,
     newspaper_fingerprints_differ,
-    stall_edge_cloth,
+    stall_end_cloth,
+    stall_end_in_view,
+    stall_view_residual,
 )
 from app.vision.overlay import save_overlay
 from app.vision.regions import (
@@ -44,7 +47,12 @@ from app.vision.regions import (
     news_spread_slots,
     stall_swipe_px,
 )
-from app.vision.screen import GameScreen, ScreenDetection, ScreenDetector
+from app.vision.screen import (
+    GameScreen,
+    ScreenDetection,
+    ScreenDetector,
+    popup_close_point,
+)
 from app.vision.template_matcher import TemplateMatcher, as_bgr
 
 log = get_logger("ACTION")
@@ -56,6 +64,18 @@ STALL_STILL_PX = 8.0
 # before it springs back. Below this the table crept without carrying a new
 # window into view.
 STALL_CREEP_PX = 40.0
+FAILURE_FRAMES_KEPT = 10
+# popup_close matched the paper's X at 0.88-0.95 on every page and the cover.
+PAPER_X_THRESHOLD = 0.8
+# A friend's farm has taken 13-36s to load (the game shows "Connecting.."
+# when the network is slow); the home farm ~5s. Polls return as soon as the
+# screen is there, so this is only a ceiling.
+GO_HOME_LOAD_S = 60.0
+# The cart (hud_shop) reads 0.96 on the home farm and does not match at all on
+# a friend's farm, which shows a house button in that corner instead.
+HOME_CART_THRESHOLD = 0.8
+# Measured centre on every page: exactly (1689, 126). The stall's X: (1768, 95).
+PAPER_X_TOLERANCE_PX = 25
 
 
 class StallPan(NamedTuple):
@@ -267,6 +287,8 @@ class NewspaperActions:
                 if ad is None:
                     shop_step.discard = True
                     exhausted = True
+                    # "Same paper, nothing left" returns with the paper open.
+                    self.close_newspaper()
                     break
                 visit = self.visit_shop(ad)
                 if not visit.success:
@@ -328,7 +350,7 @@ class NewspaperActions:
         hits: list[str] = []
         while self._news_left_page <= NEWS_PAGE_COUNT:
             if should_stop and should_stop():
-                self.close_shop()
+                self.close_newspaper()
                 return ActionResult(False, Action("STOP", "browse"), "stopped")
             png = self._shot()
             ads = self.news.find_ads(png, left_page=self._news_left_page)
@@ -354,30 +376,159 @@ class NewspaperActions:
             self._turn_newspaper()
         unique = ",".join(dict.fromkeys(hits)) or "none"
         action.target = unique
-        closed = self.close_shop()
+        closed = self.close_newspaper()
         if not closed.success:
             return closed
         log.info(f"BROWSE SUCCESS items={unique}")
         return ActionResult(True, action)
 
     def go_home(self) -> ActionResult:
-        """Return to the house-centered farm via friends → visit → close → shop_home."""
+        """Return to the house-centered farm via friends → visit → close → shop_home.
+
+        Every step waits for what the game shows rather than for a fixed time:
+        a friend's farm has taken 15s+ to load, and it opens its stall on
+        arrival, so taps sent on a timer landed on the loading screen and left
+        the bot parked in that stall. Succeeds only on the home farm (the cart
+        button bottom-left; a friend's farm shows a house button there).
+        """
         action = Action("GO_HOME", "house")
-        with self.timing.step("go_home", deadline_s=self.visit_wait_s):
-            fx, fy = self._tap_hud("hud_friends")
-            action.x, action.y = fx, fy
-            self._sleep(self.wait_s)
-            self._tap_hud("friends_first")
-            # Landing on a friend's farm: wait for anything other than loading.
-            self._poll_until(self._farm_drawn, self.visit_wait_s, step="go_home")
-            self._tap_hud("shop_close")
-            self._sleep(self.wait_s)
-            self._tap_hud("shop_home")
-            png, _ = self._poll_until(self._farm_drawn, self.visit_wait_s, step="go_home")
+        with self.timing.step("go_home", deadline_s=GO_HOME_LOAD_S):
+            cleared = self._clear_overlay()
+            if not cleared.success:
+                log.info(f"GO_HOME FAIL {cleared.error}")
+                return ActionResult(False, action, cleared.error)
+            png, _ = self._take_pending()
+            png = png if png is not None else self._shot()
+            where = self._where(png)
+            if where != "friend":
+                # Already home (or unsure): the house button of a visited farm
+                # is what re-centres the camera on the house, so visit a friend
+                # first. From anyone else's farm that button is one tap away.
+                fx, fy = self._tap_hud("hud_friends")
+                action.x, action.y = fx, fy
+                self._sleep(self.wait_s)
+                self._tap_hud("friends_first")
+                # Home is not an answer here: with the friends list still open
+                # over the home farm, the cart shows and the visit has not
+                # happened yet.
+                png, where = self._poll_where(("friend", "stall"), GO_HOME_LOAD_S)
+                if where is None:
+                    where = self._where(png)
+            # stall → friend's farm → home, and a stall may open on either farm.
+            for _ in range(4):
+                if where == "stall":
+                    # The stall keeps drawing while it closes: wait for it to go,
+                    # not for the next frame that shows anything at all.
+                    self._tap_hud("shop_close")
+                    png, where = self._poll_where(("home", "friend"), self.visit_wait_s)
+                elif where == "friend":
+                    self._tap_hud("shop_home")
+                    png, where = self._poll_where(("home", "stall"), GO_HOME_LOAD_S)
+                else:
+                    break
             self._stash_png(png)
             self.camera.clear_history()
+            if where != "home":
+                log.info(f"GO_HOME FAIL farm not drawn ({where or 'loading'})")
+                return ActionResult(False, action, "farm not drawn")
             log.info("GO_HOME house")
             return ActionResult(True, action)
+
+    def _poll_where(self, wanted: tuple[str, ...], timeout_s: float):
+        """Poll until _where reads one of `wanted`; (frame, where or None)."""
+        png, where = self._poll_until(
+            lambda frame: (lambda w: w if w in wanted else None)(self._where(frame)),
+            timeout_s,
+            step="go_home",
+        )
+        return png, where
+
+    def _where(self, png) -> str | None:
+        """'home', 'friend' (someone else's farm), 'stall', or None (loading
+        or anything else)."""
+        screen = self.screens.detect(png)
+        self._last_screen = screen
+        if screen.screen is GameScreen.PLAYER_SHOP:
+            return "stall"
+        if screen.screen is not GameScreen.FARM:
+            return None
+        cart = self.matcher.match_one(as_bgr(png), "hud_shop", threshold=HOME_CART_THRESHOLD)
+        if cart is None:
+            return "friend"
+        # The friends list covers the friends button; the farm under it is not
+        # a place to act on yet.
+        if not any(obj.state == "friends" for obj in screen.objects):
+            return None
+        return "home"
+
+    def _clear_overlay(self) -> ActionResult:
+        """Close a paper or stall left on top of the farm."""
+        png, screen = self._take_pending()
+        png = png if png is not None else self._shot()
+        screen = screen or self.screens.detect(png)
+        # The stall first: its X sits close enough to the paper's that a
+        # stall must never be taken for a paper (tapping the paper's spot on a
+        # stall only hits the awning).
+        if screen.screen is GameScreen.PLAYER_SHOP:
+            self._tap_hud("shop_close")
+            _png, where = self._poll_where(("home", "friend"), self.visit_wait_s)
+            if where is None:
+                return ActionResult(False, Action("CLOSE_SHOP", "shop"), "stall still open")
+            return ActionResult(True, Action("CLOSE_SHOP", "shop"))
+        if screen.screen is GameScreen.NEWSPAPER or self._paper_x_visible(png):
+            return self.close_newspaper(png)
+        return ActionResult(True, Action("CLEAR", screen.screen.value))
+
+    def close_newspaper(self, png=None) -> ActionResult:
+        """Tap the paper's own X and wait for the farm behind it.
+
+        The X sits at one spot on every page, not where the stall's X is, and
+        the Back key opens the game's exit dialog, so neither close_shop nor
+        Back can close the paper. It is only tapped when seen: blind, that spot
+        on the farm is next to the coin and diamond counters.
+        """
+        action = Action("CLOSE_NEWSPAPER", "newspaper")
+        with self.timing.step("close_newspaper", deadline_s=self.visit_wait_s):
+            for _ in range(2):
+                if png is None:
+                    png = self._shot()
+                if not self._paper_x_visible(png):
+                    if self._farm_drawn(png):
+                        self._stash_png(png)
+                        return ActionResult(True, action)
+                    return ActionResult(False, action, "newspaper X not on screen")
+                action.x, action.y = self._tap_hud("newspaper_close")
+                png, home = self._poll_until(
+                    self._farm_drawn, self.visit_wait_s, step="close_newspaper"
+                )
+                if home:
+                    self._stash_png(png)
+                    self.camera.clear_history()
+                    log.info(f"CLOSE_NEWSPAPER {action.x},{action.y}")
+                    return ActionResult(True, action)
+            log.info("CLOSE_NEWSPAPER FAIL still open")
+            return ActionResult(False, action, "newspaper still open")
+
+    def _paper_x_visible(self, png) -> bool:
+        """The paper's red X at its fixed spot.
+
+        The stall's X is the same art ~85px away, so the match has to land on
+        the paper's spot, not just near it.
+        """
+        image = as_bgr(png)
+        h, w = image.shape[:2]
+        cx, cy = hud_tap("newspaper_close", w, h)
+        pad = int(round(0.06 * w))
+        x0, y0 = max(0, cx - pad), max(0, cy - pad)
+        roi = image[y0 : cy + pad, x0 : cx + pad]
+        hit = self.matcher.match_one(
+            roi, "popup_close", threshold=PAPER_X_THRESHOLD, scales=(1.0,)
+        )
+        if hit is None:
+            return False
+        hx = x0 + hit.x + hit.width // 2
+        hy = y0 + hit.y + hit.height // 2
+        return abs(hx - cx) <= PAPER_X_TOLERANCE_PX and abs(hy - cy) <= PAPER_X_TOLERANCE_PX
 
     def _farm_drawn(self, png) -> bool:
         """Own/visited farm is up: HUD showing and no stall or newspaper on top."""
@@ -400,7 +551,9 @@ class NewspaperActions:
         for _ in range(STALL_PAN_MAX + 2):
             if self._stall_ends_at(png, "left"):
                 return png
-            pan = self._stall_pan(png, "left", step="stall_rewind")
+            # Across ~25 live rewinds a still first swipe never moved on a
+            # second one, so the rewind trusts it and spares ~1.3s a stall.
+            pan = self._stall_pan(png, "left", step="stall_rewind", confirm=False)
             png = pan.png
             if not pan.moved:
                 log.info("STALL rewound to the left edge")
@@ -412,33 +565,63 @@ class NewspaperActions:
     def _stall_ends_at(self, png, side: str) -> bool:
         """True when the table visibly runs out on that side.
 
-        A stall too wide for the window always leaves a crate clipped against
-        the frame, hiding the cloth behind it. Bare cloth is proof that nothing
-        is hidden there, which saves the pair of swipes it takes to prove the
-        same thing by pushing against the stop.
+        A crate that could still be panned into view always sits within one
+        crate gap of the post, so a wider run of bare cloth proves that end is
+        in view without a swipe. A wide stall shows no such run even at its
+        ends; there only _stall_pan finding the table still can tell.
         """
-        share = stall_edge_cloth(png, side)
-        if share < MIN_CLOTH_SHARE:
+        if not stall_end_in_view(png, side):
+            log.debug(f"STALL {side} end not proven, cloth={stall_end_cloth(png, side)}px")
             return False
-        log.info(f"STALL {side} end in view, cloth={share:.2f}")
+        log.info(f"STALL {side} end in view, cloth={stall_end_cloth(png, side)}px")
         return True
 
-    def _stall_pan(self, png, direction: str, *, step: str = "stall_pan") -> StallPan:
+    def _stall_pan(
+        self,
+        png,
+        direction: str,
+        *,
+        step: str = "stall_pan",
+        confirm: bool = True,
+    ) -> StallPan:
+        """Swipe once and report whether the table carried a new window in.
+
+        confirm=True spends a second swipe before calling a still table an
+        edge. The sweep asks it of its first swipe and of the first after a
+        tap: the game was seen dropping the swipe that followed the rewind's
+        bounce. Anywhere else a still table is the edge.
+        """
         with self.timing.step(step):
             self._swipe_stall(direction)
             after = self._stall_settled(step)
-            travel = abs(crate_view_shift(png, after))
-            if travel < STALL_CREEP_PX:
-                # Measured on a still frame, a swipe the game swallowed reads
-                # the same as a real edge. Ask once more before believing it.
+            travel, moved = self._stall_moved(png, after)
+            if not moved and confirm:
+                first = travel
                 self._swipe_stall(direction)
                 after = self._stall_settled(step)
-                travel = abs(crate_view_shift(png, after))
-                if travel < STALL_CREEP_PX:
-                    log.info(f"STALL edge {direction} dx={travel:.0f}")
-                    return StallPan(False, travel, after)
+                travel, moved = self._stall_moved(png, after)
+                log.debug(
+                    f"STALL {direction} confirm first_dx={first:.0f} "
+                    f"second_dx={travel:.0f} moved={moved}"
+                )
+            if not moved:
+                log.info(f"STALL edge {direction} dx={travel:.0f}")
+                return StallPan(False, travel, after)
             log.info(f"STALL pan {direction} dx={travel:.0f}")
             return StallPan(True, travel, after)
+
+    def _stall_moved(self, before, after) -> tuple[float, bool]:
+        """(|shift|, moved). A shift under STALL_CREEP_PX is only trusted when
+        undoing it leaves the same picture: on a row of look-alike crates a pan
+        of whole columns reads as a few px."""
+        dx = crate_view_shift(before, after)
+        travel = abs(dx)
+        if travel >= STALL_CREEP_PX:
+            return travel, True
+        if stall_view_residual(before, after, dx) >= SAME_VIEW_RESIDUAL:
+            log.info(f"STALL shift {dx:.0f} is a whole-column pan, not a creep")
+            return travel, True
+        return travel, False
 
     def _stall_settled(self, step: str = "stall_pan"):
         """Wait out the glide: the table keeps sliding after the finger lifts,
@@ -447,7 +630,12 @@ class NewspaperActions:
         png = self._shot()
         while time.monotonic() < deadline:
             nxt = self._shot()
-            if abs(crate_view_shift(png, nxt)) < STALL_STILL_PX:
+            dx = crate_view_shift(png, nxt)
+            # A glide of whole columns between two shots also reads as a
+            # small shift; the residual tells it from a table at rest.
+            if abs(dx) < STALL_STILL_PX and (
+                stall_view_residual(png, nxt, dx) < SAME_VIEW_RESIDUAL
+            ):
                 return nxt
             png = nxt
         self.timing.deadline_hit(step)
@@ -527,6 +715,7 @@ class NewspaperActions:
             if opened:
                 return self._opened_at_first_spread(action)
             clear_column()
+            self._keep_failure_frame(after, "open_fail")
             return ActionResult(False, action, "newspaper did not open")
 
     def _opened_at_first_spread(self, action: Action) -> ActionResult:
@@ -579,6 +768,17 @@ class NewspaperActions:
                 # The poll already classified this frame; re-running detect on
                 # it only burns another second to reach the same verdict.
                 screen = self._last_screen or self.screens.detect(png)
+            if screen.screen is GameScreen.UNKNOWN:
+                # Still on the loading screen: the farm is on its way (13-36s
+                # on a slow network). Giving up now leaves the bot tapping
+                # into a farm that opens its stall a few seconds later.
+                log.info("VISIT_SHOP still loading — waiting longer")
+                png, found = self._poll_until(
+                    self._shop_or_popup,
+                    max(0.0, GO_HOME_LOAD_S - self.visit_wait_s),
+                    step="visit_shop",
+                )
+                screen = found or self._last_screen or self.screens.detect(png)
             self._debug_shot(png, screen, "after_visit_shop.png")
             if screen.screen is GameScreen.POPUP:
                 self._close_popup(screen)
@@ -588,6 +788,7 @@ class NewspaperActions:
                 self._stash_png(png, screen)
                 return ActionResult(True, action)
             self.timing.mark("visit_fail")
+            log.info(f"VISIT_SHOP FAIL screen={screen.screen.value}")
             return ActionResult(False, action, f"screen={screen.screen.value}")
 
     def buy_wishlist(self, should_stop=None, max_buys: int | None = None) -> ActionResult:
@@ -646,6 +847,9 @@ class NewspaperActions:
             """
             nonlocal last, bought
             at_end = False
+            # The first swipe of the leg, and the first after a crate was
+            # tapped, are the ones a still stall may have dropped.
+            fresh = True
             for _ in range(STALL_PAN_MAX + 1):
                 if should_stop and should_stop():
                     return png, "stop"
@@ -679,10 +883,12 @@ class NewspaperActions:
                             return png, "limit"
                     # _buy_one already looked at the stall after the tap.
                     png = self._verify_frame()
+                    fresh = True
                     continue
                 if at_end or self._stall_ends_at(png, "right"):
                     return png, "edge"
-                pan = self._stall_pan(png, "right")
+                pan = self._stall_pan(png, "right", confirm=fresh)
+                fresh = False
                 png = pan.png
                 if not pan.moved:
                     if pan.dx < STALL_STILL_PX:
@@ -700,10 +906,8 @@ class NewspaperActions:
         _png, reason = sweep(png)
         if reason == "stop":
             return ActionResult(False, Action("STOP", "buy"), "stopped")
-        if not bought:
-            if last.error == "no wishlist slot":
-                log.info(f"BUY no slot matched missing={missing}")
-            return last
+        if not bought and last.error == "no wishlist slot":
+            log.info(f"BUY no slot matched missing={missing}")
         return last
 
     def buy_open_shop(self, limit: int = 1, should_stop=None) -> ActionResult:
@@ -902,7 +1106,7 @@ class NewspaperActions:
         still = [
             s
             for s in self.news.find_slots(png, lookup)
-            if s.item == slot.item and _overlap(s, slot) > 0.4
+            if s.item == slot.item and box_iou(s, slot) > 0.4
         ]
         return None if still else "gone"
 
@@ -918,7 +1122,7 @@ class NewspaperActions:
         png = self._shot()
         if self._plan_needs_refresh(png, mode):
             self._rescan_plan(mode, first_png=png)
-            self.close_shop()
+            self.close_newspaper()
             if not self._planned_remaining():
                 return None
             opened = self.open_newspaper()
@@ -1022,9 +1226,7 @@ class NewspaperActions:
 
     def _seek_next_planned(self) -> DetectedObject | None:
         for cell in self._planned_remaining():
-            target_left = _spread_left(cell[0])
-            while self._news_left_page < target_left:
-                self._turn_newspaper()
+            self._turn_to(_spread_left(cell[0]))
             ad = self._ad_from_cell(cell)
             if ad is None:
                 log.info(f"VISIT_SHOP missing cell {cell} on spread {self._news_left_page}")
@@ -1041,30 +1243,6 @@ class NewspaperActions:
         ):
             if p == page and s == slot:
                 return DetectedObject("newspaper", x, y, w, h, 1.0, "ad")
-        return None
-
-    def _next_ad(self) -> DetectedObject | None:
-        png = self._shot()
-        wanted = self._unused_wishlist_ad(png)
-        if wanted is not None:
-            return wanted
-        while self._news_left_page < NEWS_PAGE_COUNT:
-            self._turn_newspaper()
-            wanted = self._unused_wishlist_ad(self._shot())
-            if wanted is not None:
-                return wanted
-        return None
-
-    def _next_coin_ad(self) -> DetectedObject | None:
-        png = self._shot()
-        wanted = self._unused_coin_ad(png)
-        if wanted is not None:
-            return wanted
-        while self._news_left_page < NEWS_PAGE_COUNT:
-            self._turn_newspaper()
-            wanted = self._unused_coin_ad(self._shot())
-            if wanted is not None:
-                return wanted
         return None
 
     def _ad_cell(self, ad: DetectedObject) -> tuple:
@@ -1091,21 +1269,26 @@ class NewspaperActions:
             return ad
         return None
 
-    def _unused_coin_ad(self, png) -> DetectedObject | None:
-        for ad in self.news.find_ads(png, left_page=self._news_left_page):
-            cell = self._ad_cell(ad)
-            if cell in self._visited_ads:
-                log.info(f"VISIT_SHOP skip visited {cell}")
-                continue
-            log.info(f"VISIT_SHOP coin ad={ad.x},{ad.y} cell={cell}")
-            return ad
-        return None
-
-    def _turn_newspaper(self) -> None:
+    def _turn_newspaper(self, settle: bool = True) -> None:
         self._swipe_next_pages()
         if self._news_left_page < NEWS_PAGE_COUNT:
             self._news_left_page = min(NEWS_PAGE_COUNT, self._news_left_page + 2)
-        self._sleep(self.wait_s)
+        if settle:
+            self._sleep(self.wait_s)
+
+    def _turn_to(self, target_left: int) -> None:
+        """Swipe back to back and wait once, for the last page only.
+
+        Measured on the emulator, the paper takes every swipe of a quick run
+        (each `input swipe` already costs ~0.6s); only the final page needs
+        time to finish turning before an ad on it can be tapped.
+        """
+        turned = False
+        while self._news_left_page < target_left:
+            self._turn_newspaper(settle=False)
+            turned = True
+        if turned:
+            self._sleep(self.wait_s)
 
     def _swipe_next_pages(self) -> None:
         width, height = self._resolution()
@@ -1120,20 +1303,32 @@ class NewspaperActions:
                 missing.append(name)
         return missing
 
-    def _abort_popup(self, png, action: Action) -> ActionResult | None:
-        screen = self.screens.detect(png)
-        if screen.screen is GameScreen.POPUP:
-            self._close_popup(screen)
-            return ActionResult(False, action, "popup open")
-        return None
-
     def _close_popup(self, screen: ScreenDetection) -> None:
-        closes = [obj for obj in screen.objects if obj.type == "popup" and obj.state == "close"]
-        if not closes:
-            self.device.back()
+        point = popup_close_point(screen)
+        if point is None:
+            # Back would open the game's "exit?" dialog, not close this.
+            log.info("POPUP without a visible X — left alone")
             return
-        close = max(closes, key=lambda o: o.confidence)
-        self._tap(close.x + close.width // 2, close.y + close.height // 2)
+        self._tap(*point)
+
+    def _keep_failure_frame(self, png, prefix: str) -> None:
+        """Save the frame a step gave up on, even with debug off.
+
+        Rare by nature, so the newest FAILURE_FRAMES_KEPT are enough to see
+        what the game showed instead of the expected screen.
+        """
+        folder = SCREENSHOT_DIR / "debug"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            target = folder / f"{prefix}_{stamp}.png"
+            target.write_bytes(frame_png_bytes(png))
+            log.info(f"{prefix.upper()} frame saved {target.name}")
+            old = sorted(folder.glob(f"{prefix}_*.png"))[:-FAILURE_FRAMES_KEPT]
+            for path in old:
+                path.unlink(missing_ok=True)
+        except (OSError, ValueError) as exc:
+            log.info(f"{prefix.upper()} frame not saved: {exc}")
 
     def _debug_shot(self, png, screen: ScreenDetection | None, name: str) -> None:
         if not self.config.debug:
@@ -1171,18 +1366,8 @@ def _center(obj: DetectedObject) -> tuple[int, int]:
     return obj.x + obj.width // 2, obj.y + obj.height // 2
 
 
-def _overlap(a: ShopSlot, b: ShopSlot) -> float:
-    x1 = max(a.x, b.x)
-    y1 = max(a.y, b.y)
-    x2 = min(a.x + a.width, b.x + b.width)
-    y2 = min(a.y + a.height, b.y + b.height)
-    inter = max(0, x2 - x1) * max(0, y2 - y1)
-    union = a.width * a.height + b.width * b.height - inter
-    return inter / union if union else 0.0
-
-
 def _slot_skipped(slot: ShopSlot, skipped: list[ShopSlot]) -> bool:
-    return any(_overlap(slot, seen) > 0.4 for seen in skipped)
+    return any(box_iou(slot, seen) > 0.4 for seen in skipped)
 
 
 def _slot_proof_png(png, slot: ShopSlot) -> bytes | None:

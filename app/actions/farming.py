@@ -6,13 +6,19 @@ import time
 from dataclasses import dataclass
 
 from app.config import SCREENSHOT_DIR, AppConfig
-from app.controller.device import DeviceController
+from app.controller.device import DeviceController, frame_png_bytes
 from app.state.field_state import FieldState, FieldStatus
 from app.storage.botdata import load_crops
 from app.storage.logger import get_logger
 from app.vision.fields import FieldDetector
+from app.vision.detector import box_iou
 from app.vision.overlay import save_overlay
-from app.vision.screen import GameScreen, ScreenDetection, ScreenDetector
+from app.vision.screen import (
+    GameScreen,
+    ScreenDetection,
+    ScreenDetector,
+    popup_close_point,
+)
 from app.vision.template_matcher import TemplateMatcher, as_bgr
 
 log = get_logger("ACTION")
@@ -51,8 +57,12 @@ class FarmingActions:
         self.device = device
         self.config = config or AppConfig()
         self.fields = fields or FieldDetector()
-        self.screens = screens or ScreenDetector()
+        # A matcher we build ourselves also serves screen detection: each one
+        # decodes every PNG in data/templates. An injected one may hold only
+        # seed templates, so it is not handed to the screen detector.
+        own_matcher = matcher is None
         self.matcher = matcher or TemplateMatcher(threshold=self.config.template_threshold)
+        self.screens = screens or ScreenDetector(self.matcher if own_matcher else None)
         self.wait_s = (
             float(self.config.action_wait_s) if wait_s is None else wait_s
         )
@@ -216,7 +226,7 @@ class FarmingActions:
         best: FieldState | None = None
         best_iou = 0.0
         for candidate in self.fields.detect_fields(png):
-            iou = _iou(field, candidate)
+            iou = box_iou(field, candidate)
             if iou > best_iou:
                 best_iou = iou
                 best = candidate
@@ -235,20 +245,19 @@ class FarmingActions:
     def _close_popup(self, screen: ScreenDetection) -> None:
         if self.config.allow_diamond_spending:
             log.info("diamond spending is off — closing popup anyway")
-        closes = [obj for obj in screen.objects if obj.type == "popup" and obj.state == "close"]
-        if not closes:
-            self.device.back()
+        point = popup_close_point(screen)
+        if point is None:
+            # Back would open the game's "exit?" dialog, not close this.
+            log.info("POPUP without a visible X — left alone")
             return
-        close = max(closes, key=lambda o: o.confidence)
-        self.device.tap(close.x + close.width // 2, close.y + close.height // 2)
+        self.device.tap(*point)
 
     def _debug_shot(self, png, screen: ScreenDetection, name: str) -> None:
         if not self.config.debug:
             return
         dest = SCREENSHOT_DIR / "debug" / name
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if isinstance(png, (bytes, bytearray)):
-            dest.write_bytes(png)
+        dest.write_bytes(frame_png_bytes(png))
         extra = self.fields.detect(png)
         combined = ScreenDetection(
             screen.screen,
@@ -260,16 +269,6 @@ class FarmingActions:
             combined,
             SCREENSHOT_DIR / "debug" / name.replace(".png", "_overlay.png"),
         )
-
-
-def _iou(a: FieldState, b: FieldState) -> float:
-    x1 = max(a.x, b.x)
-    y1 = max(a.y, b.y)
-    x2 = min(a.x + a.width, b.x + b.width)
-    y2 = min(a.y + a.height, b.y + b.height)
-    inter = max(0, x2 - x1) * max(0, y2 - y1)
-    union = a.width * a.height + b.width * b.height - inter
-    return inter / union if union else 0.0
 
 
 class _PopupAbort(Exception):

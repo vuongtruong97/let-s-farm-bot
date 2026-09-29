@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import cv2
@@ -42,13 +44,27 @@ AD_DIM_V = 185.0
 # Pale green-and-white checkered cloth the crates stand on.
 CLOTH_LO = (40, 0, 170)
 CLOTH_HI = (100, 110, 255)
-# The stall's own post stands just inside each end of the crate box, so the
-# cloth is read past it.
-STALL_EDGE_PAD = 0.05
-STALL_EDGE_STRIP = 0.05
-# Measured on live stalls: cloth in view reads 0.44-0.60 of the strip, a crate
-# clipped against the frame reads 0.03-0.10.
-MIN_CLOTH_SHARE = 0.25
+# Table between the stall's two posts, crate rows only (1920x1080 Small UI).
+STALL_INNER_X = (374 / 1920, 1554 / 1920)
+STALL_INNER_Y = (330 / 1080, 840 / 1080)
+# A column of bare checkered cloth reads ~0.6 in the cloth mask; a crate
+# anywhere in it pulls that down.
+CLOTH_COLUMN_SHARE = 0.5
+# Measured edge to edge on six live stalls: next to a post, bare cloth runs
+# 80-220px wide on a stall that fits the window, but never more than ~50px
+# mid-table (the gap between two crates) or at the end of a wide stall. So a
+# run this wide proves nothing is hidden on that side; a narrower one proves
+# nothing either way, and only a swipe can tell.
+MIN_END_CLOTH = 60 / 1920
+# Two frames of the same stall position, after undoing a small shift, differ
+# by at most ~11 (mean grey level, lightly blurred) even with idle sparkle or
+# a 12px creep into an edge; a real pan brings other crates in and reads ~19
+# or more. Only a pan of exactly whole columns across look-alike crates reads
+# lower, and nothing on screen can tell that one apart.
+SAME_VIEW_RESIDUAL = 12.0
+# The posts do not pan with the table, so a strip this wide next to each one is
+# left out of the comparison (it is also the largest shift still trusted).
+RESIDUAL_EDGE_PX = 40
 PRICE_NEAR_PAD = (12, 8, 56, 56)
 QTY_PAD_LEFT = 0.85
 QTY_PAD_UP = 1.05
@@ -58,6 +74,18 @@ PROOF_PAD_RIGHT = 1.15
 PROOF_PAD_DOWN = 1.05
 QTY_X_THRESHOLD = 0.70
 QTY_SCALES = (0.7, 0.85, 1.0, 1.15, 1.3, 1.5)
+# cv2.matchTemplate releases the GIL, so one wishlist item per thread cuts a
+# 15-item stall scan from ~0.9s to ~0.2s. Results are collected in wishlist
+# order, so the outcome is the same as a sequential scan.
+MATCH_WORKERS = max(1, min(8, os.cpu_count() or 1))
+_MATCH_POOL = ThreadPoolExecutor(max_workers=MATCH_WORKERS, thread_name_prefix="match")
+
+
+def _map_ordered(fn, items) -> list:
+    items = list(items)
+    if len(items) < 2:
+        return [fn(item) for item in items]
+    return list(_MATCH_POOL.map(fn, items))
 
 
 @dataclass
@@ -187,10 +215,14 @@ class NewspaperDetector:
     ) -> list[tuple[DetectedObject, str]]:
         image = source if isinstance(source, np.ndarray) else as_bgr(source)
         cells = ads if ads is not None else self.find_ads(image, left_page=left_page)
+        items = _map_ordered(
+            lambda ad: self._wishlist_item_in(
+                image[ad.y : ad.y + ad.height, ad.x : ad.x + ad.width], wishlist
+            ),
+            cells,
+        )
         found: list[tuple[DetectedObject, str]] = []
-        for ad in cells:
-            roi = image[ad.y : ad.y + ad.height, ad.x : ad.x + ad.width]
-            item = self._wishlist_item_in(roi, wishlist)
+        for ad, item in zip(cells, items):
             if item is not None:
                 found.append((ad, item))
                 log.info(f"NEWS match {item} ad={ad.x},{ad.y}")
@@ -209,9 +241,12 @@ class NewspaperDetector:
     def find_slots(self, source, wishlist: dict[str, dict]) -> list[ShopSlot]:
         image = source if isinstance(source, np.ndarray) else as_bgr(source)
         search, ox, oy = _shop_search(image)
+        entries = list(wishlist.items())
+        matches = _map_ordered(
+            lambda entry: self._match_wishlist_items(search, *entry), entries
+        )
         slots: list[ShopSlot] = []
-        for item, spec in wishlist.items():
-            hits = self._match_wishlist_items(search, item, spec)
+        for (item, spec), hits in zip(entries, matches):
             if not hits:
                 name = spec.get("template") or f"item_{item}"
                 if name not in self.matcher.names:
@@ -307,21 +342,6 @@ class NewspaperDetector:
                 continue
             icons.append(CrateIcon(x, y, w, h, crop.copy()))
         return icons
-
-    def find_close(self, source) -> DetectedObject | None:
-        for name in ("shop_close", "newspaper_close", "popup_close"):
-            hit = self._match(source, name)
-            if hit is not None:
-                return match_to_object(hit)
-        return None
-
-    def find_home(self, source) -> DetectedObject | None:
-        hit = self._match(source, "shop_home")
-        return match_to_object(hit) if hit else None
-
-    def find_friends(self, source) -> DetectedObject | None:
-        hit = self._match(source, "hud_friends")
-        return match_to_object(hit) if hit else None
 
     def find_header(self, source) -> DetectedObject | None:
         hit = self._match(source, "shop_header")
@@ -554,29 +574,67 @@ def _shop_search(image: np.ndarray) -> tuple[np.ndarray, int, int]:
     return image[y : y + bh, x : x + bw], x, y
 
 
-def stall_edge_cloth(source, side: str) -> float:
-    """Share of bare tablecloth at one end of the crate table.
+def stall_end_cloth(source, side: str) -> int:
+    """Width in px of bare cloth running from one post towards the middle.
 
-    A stall wider than the window always keeps a crate clipped against the
-    frame, and that crate covers the cloth. Bare cloth therefore means no
-    column is hidden that way: panning there would only push against the stop.
-    Returns 0.0 for a crop with no table in it, which reads as "go and look".
+    A crate that could still be panned into view always sits within a crate
+    gap of the post, so a run of MIN_END_CLOTH or more means that end of the
+    table is in view. Returns 0 for a crop with no stall in it.
     """
+    inner = _stall_inner(source)
+    if inner.size == 0:
+        return 0
+    hsv = cv2.cvtColor(inner, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, np.array(CLOTH_LO), np.array(CLOTH_HI))
+    cloth = (mask > 0).mean(axis=0) >= CLOTH_COLUMN_SHARE
+    if side == "right":
+        cloth = cloth[::-1]
+    elif side != "left":
+        raise ValueError(f"stall side '{side}'")
+    blocked = np.flatnonzero(~cloth)
+    return int(blocked[0]) if blocked.size else int(cloth.size)
+
+
+def _stall_inner(source) -> np.ndarray:
+    """Crate rows between the two posts: the only part of a stall that pans."""
     image = source if isinstance(source, np.ndarray) else as_bgr(source)
     h, w = image.shape[:2]
-    box = shop_crates_px(w, h)
-    if box is None:
-        return 0.0
-    x, y, bw, bh = box
-    pad = int(round(bw * STALL_EDGE_PAD))
-    strip = max(1, int(round(bw * STALL_EDGE_STRIP)))
-    x1 = x + pad if side == "left" else x + bw - pad - strip
-    roi = image[y : y + bh, max(x, x1) : min(x + bw, x1 + strip)]
-    if roi.size == 0:
-        return 0.0
-    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, np.array(CLOTH_LO), np.array(CLOTH_HI))
-    return float(np.count_nonzero(mask)) / mask.size
+    if w < 640 or h < 400:
+        return np.zeros((0, 0, 3), dtype=np.uint8)
+    x0, x1 = (int(round(v * w)) for v in STALL_INNER_X)
+    y0, y1 = (int(round(v * h)) for v in STALL_INNER_Y)
+    return image[y0:y1, x0:x1]
+
+
+def stall_end_in_view(source, side: str) -> bool:
+    image = source if isinstance(source, np.ndarray) else as_bgr(source)
+    return stall_end_cloth(image, side) >= MIN_END_CLOTH * image.shape[1]
+
+
+def stall_view_residual(a, b, dx: float) -> float:
+    """Mean grey difference of the table after undoing a shift of about dx px.
+
+    Phase correlation on a grid of look-alike crates can read a pan of one or
+    more whole columns as a few px. Undoing that small shift leaves the same
+    picture only when the table really stayed put, so a high residual exposes
+    a pan the shift alone would have called an edge.
+    """
+    left, right = _stall_inner(a), _stall_inner(b)
+    if left.size == 0 or right.shape != left.shape:
+        return float("inf")
+    ga = cv2.GaussianBlur(cv2.cvtColor(left, cv2.COLOR_BGR2GRAY), (5, 5), 0)
+    gb = cv2.GaussianBlur(cv2.cvtColor(right, cv2.COLOR_BGR2GRAY), (5, 5), 0)
+    edge = RESIDUAL_EDGE_PX
+    width = ga.shape[1]
+    ref = ga[:, edge : width - edge]
+    best = float("inf")
+    # Phase correlation is sub-pixel; a few px either side absorbs rounding.
+    for s in range(int(round(dx)) - 3, int(round(dx)) + 4):
+        if abs(s) >= edge:
+            continue
+        moved = gb[:, edge + s : width - edge + s]
+        best = min(best, float(cv2.absdiff(ref, moved).mean()))
+    return best
 
 
 def crate_table_bgr(source) -> np.ndarray:

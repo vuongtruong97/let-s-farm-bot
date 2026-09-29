@@ -8,11 +8,13 @@ import time
 from collections import deque
 
 from app.actions.farming import ActionResult, FarmingActions
+from app.actions.game import restart_game
 from app.actions.macro import play_macro
 from app.actions.shop import NewspaperActions
-from app.config import load_config
+from app.config import game_package, load_config
 from app.controller.camera import CameraManager
-from app.controller.device import DeviceController
+from app.controller.adb import DeviceError
+from app.controller.device import DeviceController, frame_png_bytes
 from app.controller.recorder import GeteventListener, MacroRecorder
 from app.storage.botdata import clean_id
 from app.storage.logger import ActionFormatter, get_logger
@@ -45,6 +47,7 @@ JOBS = frozenset(
         "buy_wishlist",
         "close_shop",
         "go_home",
+        "restart_game",
     }
 )
 NEWS_STEP_METHODS = {
@@ -62,6 +65,16 @@ NEWS_STEP_METHODS = {
 }
 QUICK_DURING_RECORD = frozenset({"screenshot", "connect", "detect", "pan", "back", "home"})
 MAX_LOGS = 80
+# An adb hiccup that outlives the device's own retries ends one loop round,
+# not the loop: wait, then start the round over from home. Only this many in a
+# row (the emulator is really gone) stop it.
+LOOP_ADB_FAILURES = 3
+LOOP_ADB_WAIT_S = 10.0
+# Rounds in a row that could not get back to the farm before the game is
+# restarted, and how many restarts an hour are allowed before the loop gives up
+# (a game that will not come back needs a person, not a restart loop).
+LOOP_STUCK_ROUNDS = 2
+LOOP_MAX_RESTARTS_PER_HOUR = 3
 MAX_LIMIT = 20
 
 
@@ -91,7 +104,9 @@ class BotRuntime:
         self.screen: str | None = None
         self.last_error: str | None = None
         self.last_result: dict | None = None
-        self.last_frame: bytes | None = None
+        # Whatever device.screenshot() returned; PNG bytes are made on demand.
+        self.last_frame = None
+        self._frame_png: bytes | None = None
         self.logs: deque[str] = deque(maxlen=MAX_LOGS)
         self.recorder: MacroRecorder | None = None
         self._news = None
@@ -126,7 +141,12 @@ class BotRuntime:
 
     def frame_png(self) -> bytes | None:
         with self.lock:
-            return self.last_frame
+            frame = self.last_frame
+            if frame is None or isinstance(frame, (bytes, bytearray)):
+                return frame
+            if self._frame_png is None:
+                self._frame_png = frame_png_bytes(frame)
+            return self._frame_png
 
     def start(self, action: str, payload: dict | None = None) -> dict:
         job = (action or "").strip().lower()
@@ -353,6 +373,8 @@ class BotRuntime:
             self._loop(payload)
         elif job == "macro":
             self._macro(str(payload.get("name") or ""))
+        elif job == "restart_game":
+            self._restart_game()
         elif job in NEWS_STEP_METHODS:
             self._news_step(job, payload)
 
@@ -394,6 +416,20 @@ class BotRuntime:
                 self._news.wishlist = active_wishlist()
         return self._news
 
+    def _farming_actor(self):
+        """Farming borrows the newspaper actor's matcher and screen detector.
+
+        A fresh TemplateMatcher decodes every PNG in data/templates, and the
+        loop builds a farming actor per harvest and per plant.
+        """
+        news = self._newspaper_actor()
+        shared = {}
+        for name in ("matcher", "screens"):
+            value = getattr(news, name, None)
+            if value is not None:
+                shared[name] = value
+        return self.farming_cls(self.device, load_config(), **shared)
+
     def _news_step(self, job: str, payload: dict) -> None:
         actor = self._newspaper_actor()
         method = getattr(actor, NEWS_STEP_METHODS[job])
@@ -426,6 +462,7 @@ class BotRuntime:
             png = original()
             with self.lock:
                 self.last_frame = png
+                self._frame_png = None
             return png
 
         self.device.screenshot = hooked
@@ -454,7 +491,7 @@ class BotRuntime:
     def _harvest(self, limit: int) -> None:
         if not self._ensure_home():
             return
-        result = self.farming_cls(self.device, load_config()).harvest_ready_fields(
+        result = self._farming_actor().harvest_ready_fields(
             limit=limit, should_stop=self._stopped
         )
         self._store_action(result)
@@ -462,7 +499,7 @@ class BotRuntime:
     def _plant(self, crop: str, limit: int) -> None:
         if not self._ensure_home():
             return
-        result = self.farming_cls(self.device, load_config()).plant_empty_fields(
+        result = self._farming_actor().plant_empty_fields(
             crop=crop, limit=limit, should_stop=self._stopped
         )
         self._store_action(result)
@@ -492,41 +529,141 @@ class BotRuntime:
         limit = _limit(payload)
         news_mode = _news_mode(payload)
         rest_min = _loop_rest_min(payload)
+        failures = 0
+        stuck = 0
+        restarts: list[float] = []
         while not self._stopped():
-            if not self._ensure_home():
-                break
-            if harvest:
-                result = self.farming_cls(self.device, load_config()).harvest_ready_fields(
-                    limit=limit, should_stop=self._stopped
+            try:
+                missing = self._game_not_in_front()
+                if missing:
+                    self._recover_game(missing, restarts)
+                    stuck = 0
+                    continue
+                outcome = self._loop_round(
+                    harvest, plant, newspaper, crop, limit, news_mode, rest_min
                 )
-                self._store_action(result)
-            if self._stopped():
-                break
-            if plant:
-                result = self.farming_cls(self.device, load_config()).plant_empty_fields(
-                    crop=crop, limit=limit, should_stop=self._stopped
-                )
-                self._store_action(result)
-            if self._stopped():
-                break
-            if newspaper:
-                result = self._newspaper(
-                    limit, news_mode, reset_home=False, until_done=True
-                )
-                if self._stopped():
+                failures = 0
+                if outcome == "stop":
                     break
-                if _newspaper_cycle_done(result):
-                    self._rest_minutes(rest_min)
+                if outcome == "stuck":
+                    stuck += 1
+                    log.info(f"LOOP not back on the farm ({stuck}/{LOOP_STUCK_ROUNDS})")
+                    if stuck >= LOOP_STUCK_ROUNDS:
+                        self._recover_game(
+                            f"{stuck} rounds without reaching the farm", restarts
+                        )
+                        stuck = 0
+                    elif self.loop_pause_s:
+                        self._wait_unless_stopped(self.loop_pause_s)
                 else:
-                    log.info(
-                        "LOOP skip rest — "
-                        f"{result.action.type} {result.error or result.action.target}"
-                    )
-                    if self.loop_pause_s:
-                        time.sleep(self.loop_pause_s)
-            elif self.loop_pause_s:
-                time.sleep(self.loop_pause_s)
+                    stuck = 0
+            except DeviceError as exc:
+                failures += 1
+                if failures >= LOOP_ADB_FAILURES:
+                    # Reconnects already failed inside the device; one restart
+                    # is the last thing worth trying before giving up.
+                    self._recover_game(f"adb failed {failures} times: {exc}", restarts)
+                    failures = 0
+                    continue
+                log.info(
+                    f"LOOP adb error {failures}/{LOOP_ADB_FAILURES} ({exc}) — "
+                    f"retrying from home in {LOOP_ADB_WAIT_S:g}s"
+                )
+                self._wait_unless_stopped(LOOP_ADB_WAIT_S)
         self._set_result(True, "STOP" if self._stopped() else "LOOP", "done")
+
+    def _loop_round(
+        self,
+        harvest: bool,
+        plant: bool,
+        newspaper: bool,
+        crop: str,
+        limit: int,
+        news_mode: str,
+        rest_min: float,
+    ) -> str:
+        """One pass of the loop: "ok", "stuck" (the farm never came back) or
+        "stop"."""
+        if not self._ensure_home():
+            return "stop" if self._stopped() else "stuck"
+        if harvest:
+            result = self._farming_actor().harvest_ready_fields(
+                limit=limit, should_stop=self._stopped
+            )
+            self._store_action(result)
+        if self._stopped():
+            return "stop"
+        if plant:
+            result = self._farming_actor().plant_empty_fields(
+                crop=crop, limit=limit, should_stop=self._stopped
+            )
+            self._store_action(result)
+        if self._stopped():
+            return "stop"
+        if newspaper:
+            result = self._newspaper(limit, news_mode, reset_home=False, until_done=True)
+            if self._stopped():
+                return "stop"
+            if _newspaper_cycle_done(result):
+                self._rest_minutes(rest_min)
+            else:
+                log.info(
+                    "LOOP skip rest — "
+                    f"{result.action.type} {result.error or result.action.target}"
+                )
+                if self.loop_pause_s:
+                    time.sleep(self.loop_pause_s)
+        elif self.loop_pause_s:
+            time.sleep(self.loop_pause_s)
+        return "ok"
+
+    def _game_not_in_front(self) -> str | None:
+        """Why the game needs restarting before this round, or None.
+
+        HUD taps on the Android launcher (the game crashed) or on another app
+        would hit whatever sits there, so this is checked before any tap.
+        """
+        probe = getattr(self.device, "foreground_package", None)
+        if probe is None:
+            return None
+        package = game_package(load_config())
+        front = probe()
+        if not front or front == package:
+            return None
+        return f"{front} is in front, not {package}"
+
+    def _recover_game(self, reason: str, restarts: list[float]) -> None:
+        now = time.monotonic()
+        restarts[:] = [t for t in restarts if now - t < 3600.0]
+        if len(restarts) >= LOOP_MAX_RESTARTS_PER_HOUR:
+            raise RuntimeError(
+                f"game restarted {len(restarts)} times in the last hour — "
+                f"stopping ({reason})"
+            )
+        restarts.append(now)
+        log.info(f"LOOP restart game ({reason})")
+        self._restart_game()
+
+    def _restart_game(self) -> ActionResult:
+        news = self._newspaper_actor()
+        screens = getattr(news, "screens", None) or ScreenDetector()
+        result = restart_game(
+            self.device,
+            screens,
+            game_package(load_config()),
+            should_stop=self._stopped,
+        )
+        if hasattr(news, "reset_loop_state"):
+            news.reset_loop_state()
+        if self.camera is not None:
+            self.camera.clear_history()
+        self._store_action(result)
+        return result
+
+    def _wait_unless_stopped(self, seconds: float) -> None:
+        end = time.monotonic() + max(0.0, seconds)
+        while time.monotonic() < end and not self._stopped():
+            time.sleep(min(0.5, end - time.monotonic()))
 
     def _rest_minutes(self, minutes: float) -> None:
         seconds = max(0.0, float(minutes) * 60.0)
