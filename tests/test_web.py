@@ -1204,3 +1204,25 @@ def test_skip_rest_api(httpd: str, data_home: Path, monkeypatch: pytest.MonkeyPa
     code, body = _request(f"{httpd}/api/skip-rest", "POST", {})
     assert code == 200
     assert body["run"]["status"] == "idle"
+
+
+def test_bundled_font_is_served_and_cached(httpd: str):
+    with urllib.request.urlopen(f"{httpd}/static/baloo2-vietnamese.woff2", timeout=5) as res:
+        assert res.status == 200
+        assert res.headers.get_content_type() == "font/woff2"
+        assert "max-age" in res.headers["Cache-Control"]
+        assert res.read(4) == b"wOF2"
+    # Pages and scripts stay uncached so an edit shows on the next reload.
+    with urllib.request.urlopen(f"{httpd}/static/app.js", timeout=5) as res:
+        assert res.headers["Cache-Control"] == "no-store"
+
+
+def test_game_skin_pieces_are_wired(httpd: str):
+    _code, page = _request(f"{httpd}/")
+    assert page.count(b'class="modal-x"') == page.count(b"<dialog ")
+    assert b"rest-bar-label" in page
+    _code, css = _request(f"{httpd}/static/style.css")
+    for subset in (b"vietnamese", b"latin-ext", b"latin"):
+        assert b"/static/baloo2-" + subset + b".woff2" in css
+    _code, js = _request(f"{httpd}/static/app.js")
+    assert b".modal-x" in js

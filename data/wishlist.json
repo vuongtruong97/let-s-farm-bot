@@ -27,7 +27,7 @@
   "bo_sua": {
     "template": "item_bo_sua",
     "news_template": "item_bo_sua_news",
-    "enabled": true
+    "enabled": false
   },
   "so_do": {
     "template": "item_so_do",
@@ -122,12 +122,12 @@
   "duong_trang": {
     "template": "item_duong_trang",
     "news_template": "item_duong_trang_news",
-    "enabled": true
+    "enabled": false
   },
   "bat_kem": {
     "template": "item_bat_kem",
     "news_template": "item_bat_kem_news",
-    "enabled": true
+    "enabled": false
   },
   "mu_xanh": {
     "template": "item_mu_xanh",
@@ -187,6 +187,6 @@
   "siro": {
     "template": "item_siro",
     "news_template": "item_siro_news",
-    "enabled": true
+    "enabled": false
   }
 }

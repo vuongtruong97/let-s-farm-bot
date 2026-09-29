@@ -114,16 +114,25 @@
             </div>
           </div>
           <dl class="run-stats">
-            <div><dt>Thời gian</dt><dd id="stat-elapsed">—</dd></div>
-            <div><dt>Vòng xong</dt><dd id="stat-rounds">—</dd></div>
-            <div><dt>Mua phiên này</dt><dd id="stat-buys">—</dd></div>
+            <div>
+              <dt>Thời gian</dt>
+              <dd id="stat-elapsed">—</dd>
+            </div>
+            <div>
+              <dt>Vòng xong</dt>
+              <dd id="stat-rounds">—</dd>
+            </div>
+            <div>
+              <dt>Mua phiên này</dt>
+              <dd id="stat-buys">—</dd>
+            </div>
           </dl>
           <div id="rest-box" class="rest-box" hidden>
             <div class="rest-line">
               <span>Nghỉ giữa vòng · còn <b id="rest-left">0:00</b></span>
               <button id="btn-skip-rest" class="btn btn-compact" type="button">Chạy vòng mới ngay</button>
             </div>
-            <div class="rest-bar"><span id="rest-bar-fill"></span></div>
+            <div class="rest-bar"><span id="rest-bar-fill"></span><span id="rest-bar-label" class="rest-bar-label" aria-hidden="true"></span></div>
           </div>
         </div>
 
@@ -161,7 +170,7 @@
           <p id="prefs-status" class="muted tiny" aria-live="polite"></p>
         </div>
         <div class="row wrap main-actions">
-          <button id="btn-start" class="btn primary big" type="button">▶ Bắt đầu vòng lặp</button>
+          <button id="btn-start" class="btn primary big" type="button">▶ Bắt đầu</button>
           <button id="btn-stop" class="btn danger big" type="button" disabled>■ Dừng</button>
         </div>
 
@@ -177,15 +186,7 @@
         <h3>Thiết bị</h3>
         <div class="row wrap">
           <button class="btn" type="button" data-run="connect">Kết nối</button>
-          <button
-            class="btn"
-            type="button"
-            data-run="restart_game"
-            data-confirm="Tắt hẳn game rồi mở lại? Bot sẽ đợi tới khi thấy nông trại."
-            data-confirm-ok="Khởi động lại"
-          >
-            Khởi động lại game
-          </button>
+          <button class="btn" type="button" data-run="restart_game" data-confirm="Tắt hẳn game rồi mở lại? Bot sẽ đợi tới khi thấy nông trại." data-confirm-ok="Khởi động lại">Khởi động lại game</button>
         </div>
       </section>
 
@@ -399,15 +400,7 @@
           <button class="btn" type="button" data-run="detect">Nhận diện</button>
           <button class="btn" type="button" data-run="back">Back</button>
           <button class="btn" type="button" data-run="home">Home</button>
-          <button
-            class="btn"
-            type="button"
-            data-run="restart_game"
-            data-confirm="Tắt hẳn game rồi mở lại? Bot sẽ đợi tới khi thấy nông trại."
-            data-confirm-ok="Khởi động lại"
-          >
-            Khởi động lại game
-          </button>
+          <button class="btn" type="button" data-run="restart_game" data-confirm="Tắt hẳn game rồi mở lại? Bot sẽ đợi tới khi thấy nông trại." data-confirm-ok="Khởi động lại">Khởi động lại game</button>
         </div>
         <div class="row wrap pan">
           <span class="muted">Camera</span>
@@ -512,6 +505,7 @@
             <button class="btn primary" type="submit">Lưu</button>
           </div>
         </div>
+        <button class="modal-x" type="button" aria-label="Đóng" title="Đóng">✖</button>
       </form>
     </dialog>
 
@@ -527,6 +521,7 @@
       <div class="modal-actions">
         <button id="library-picker-cancel" class="btn" type="button">Huỷ</button>
       </div>
+      <button class="modal-x" type="button" aria-label="Đóng" title="Đóng">✖</button>
     </dialog>
 
     <dialog id="share-modal" class="modal">
@@ -539,6 +534,7 @@
       <div class="modal-actions">
         <button id="share-close" class="btn" type="button">Đóng</button>
       </div>
+      <button class="modal-x" type="button" aria-label="Đóng" title="Đóng">✖</button>
     </dialog>
 
     <dialog id="buy-history-modal" class="modal">
@@ -548,6 +544,7 @@
       <div class="modal-actions">
         <button id="buy-history-close" class="btn" type="button">Đóng</button>
       </div>
+      <button class="modal-x" type="button" aria-label="Đóng" title="Đóng">✖</button>
     </dialog>
 
     <dialog id="confirm-modal" class="modal confirm-modal">
@@ -558,6 +555,7 @@
           <button class="btn" type="submit" value="cancel">Huỷ</button>
           <button id="confirm-ok" class="btn danger" type="submit" value="ok">Xoá</button>
         </div>
+        <button class="modal-x" type="button" aria-label="Đóng" title="Đóng">✖</button>
       </form>
     </dialog>
 

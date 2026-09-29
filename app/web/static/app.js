@@ -771,6 +771,8 @@ function renderRunStatus() {
     const total = Math.max(1, (run.rest_s || 1) * 1000);
     $("rest-left").textContent = fmtDuration(left + 999);
     $("rest-bar-fill").style.width = `${Math.min(100, Math.max(0, 100 - (left / total) * 100))}%`;
+    // Read like the game's storage bar: "3:20 / 5:00".
+    $("rest-bar-label").textContent = `${fmtDuration(left + 999)} / ${fmtDuration(total)}`;
   }
 }
 
@@ -1416,7 +1418,6 @@ function applyLibraryPick(id) {
   slot.img.hidden = false;
   if (pickerSlot.form === "add") syncItemPreview();
   $("library-picker").close();
-  pickerSlot = null;
 }
 
 function renderPickerGrid() {
@@ -1437,15 +1438,19 @@ async function showLibraryPicker(key) {
   $("library-picker").showModal();
 }
 
-$("library-picker-cancel").addEventListener("click", () => {
-  $("library-picker").close();
+$("library-picker-cancel").addEventListener("click", () => $("library-picker").close());
+$("library-picker").addEventListener("click", (ev) => {
+  if (ev.target === $("library-picker")) $("library-picker").close();
+});
+// Every way out (pick, Huỷ, ✖, Esc, backdrop) ends here.
+$("library-picker").addEventListener("close", () => {
   pickerSlot = null;
 });
-$("library-picker").addEventListener("click", (ev) => {
-  if (ev.target === $("library-picker")) {
-    $("library-picker").close();
-    pickerSlot = null;
-  }
+
+// The round red ✖ on every popup.
+document.addEventListener("click", (ev) => {
+  const x = ev.target.closest(".modal-x");
+  if (x) x.closest("dialog").close();
 });
 
 $("library-picker-file").addEventListener("change", async (ev) => {
