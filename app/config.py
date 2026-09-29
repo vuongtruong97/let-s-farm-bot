@@ -9,6 +9,8 @@ DATA_DIR = ROOT / "data"
 CONFIG_PATH = DATA_DIR / "config.json"
 SCREENSHOT_DIR = ROOT / "screenshots"
 LOG_DIR = ROOT / "logs"
+# Let's Farm on BlueStacks; config.package overrides it.
+DEFAULT_GAME_PACKAGE = "letsfarm.com.playday"
 
 
 @dataclass
@@ -26,6 +28,11 @@ class AppConfig:
     loop_rest_min: float = 5.0
     action_wait_s: float = 0.9
     buy_wait_s: float = 2.0
+    visit_wait_s: float = 2.5
+    poll_interval_s: float = 0.0
+    stall_swipe_ms: int = 280
+    # Raw screencap skips PNG encode/decode; set false if an emulator mangles it.
+    screencap_raw: bool = True
 
     def screenshot_dir(self) -> Path:
         SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -35,6 +42,10 @@ class AppConfig:
     def log_dir(self) -> Path:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         return LOG_DIR
+
+
+def game_package(config: AppConfig) -> str:
+    return (config.package or "").strip() or DEFAULT_GAME_PACKAGE
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -64,6 +75,10 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
         "loop_rest_min": config.loop_rest_min,
         "action_wait_s": config.action_wait_s,
         "buy_wait_s": config.buy_wait_s,
+        "visit_wait_s": config.visit_wait_s,
+        "poll_interval_s": config.poll_interval_s,
+        "stall_swipe_ms": config.stall_swipe_ms,
+        "screencap_raw": config.screencap_raw,
     }
     target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return target

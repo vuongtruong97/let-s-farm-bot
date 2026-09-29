@@ -488,12 +488,89 @@ select {
   font-size: 12px;
   border-radius: 8px;
 }
+.timing-head {
+  font-size: 11px;
+  text-align: right;
+  min-width: 0;
+}
+.timing-split {
+  display: flex;
+  height: 15px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(36, 25, 15, 0.08);
+  margin-bottom: 6px;
+}
+.timing-split .seg {
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+  color: var(--paper);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.timing-split .seg-adb {
+  background: var(--danger);
+}
+.timing-split .seg-sleep {
+  background: var(--wheat);
+}
+.timing-split .seg-cpu {
+  background: var(--moss);
+}
+.timing-safety {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.timing-safety.warn {
+  color: var(--danger);
+  font-weight: 600;
+}
+.timing-waits {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.timing-scroll {
+  overflow-x: auto;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.timing-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.timing-table thead {
+  color: var(--muted);
+  font-size: 10px;
+  text-align: left;
+}
+.timing-table th,
+.timing-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+}
+.timing-table th:first-child,
+.timing-table td.step {
+  text-align: left;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+.timing-table tr.hot td {
+  background: rgba(163, 59, 36, 0.12);
+}
+.timing-table tr.slack td {
+  color: var(--muted);
+}
 .buy-log {
   width: 100%;
   border-collapse: collapse;
   margin: 0;
   padding: 0;
-  max-height: 520px;
+  max-height: 1000px;
   overflow: auto;
   font-size: 12px;
   display: block;
@@ -529,7 +606,7 @@ select {
 }
 .buy-log tbody {
   display: block;
-  max-height: 500px;
+  max-height: 900px;
   overflow: auto;
 }
 .buy-log .item {
@@ -674,7 +751,12 @@ select {
   .control-grid,
   .preview-pair,
   .tile .pair {
-    grid-template-columns: 1fr;
+    /* minmax(0,…) not 1fr: a nowrap table must scroll inside the card, not
+       stretch the track and push the page sideways. */
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .shell > .card {
+    min-width: 0;
   }
   body.has-live .shell > .page.active {
     order: -1;
@@ -783,7 +865,7 @@ select {
     min-width: 0;
   }
   .row.wrap.pan > .btn.primary,
-  .row.wrap.pan > [data-pan="reset"] {
+  .row.wrap.pan > [data-pan='reset'] {
     grid-column: span 2;
   }
   #btn-start,
@@ -808,6 +890,12 @@ select {
   .log {
     max-height: 140px;
     overflow-x: auto;
+  }
+  .timing-scroll {
+    max-height: 200px;
+  }
+  .timing-head {
+    text-align: left;
   }
   .grid {
     grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
@@ -846,7 +934,7 @@ select {
   .lede {
     overflow-wrap: anywhere;
   }
-  .page[data-page="develop"] .row.wrap:not(.pan) > .btn {
+  .page[data-page='develop'] .row.wrap:not(.pan) > .btn {
     flex-basis: 100%;
   }
   .buy-log th:nth-child(1),

@@ -27,12 +27,12 @@
   "bo_sua": {
     "template": "item_bo_sua",
     "news_template": "item_bo_sua_news",
-    "enabled": false
+    "enabled": true
   },
   "so_do": {
     "template": "item_so_do",
     "news_template": "item_so_do_news",
-    "enabled": false
+    "enabled": true
   },
   "bua_mo_rong_dat": {
     "template": "item_bua_mo_rong_dat",
@@ -72,36 +72,26 @@
   "van_go": {
     "template": "item_van_go",
     "news_template": "item_van_go_news",
-    "enabled": false
+    "enabled": true
   },
   "pho_mai": {
     "template": "item_pho_mai",
     "news_template": "item_pho_mai_news",
-    "enabled": false
+    "enabled": true
   },
   "xeng": {
     "template": "item_xeng",
     "news_template": "item_xeng_news",
-    "enabled": false
+    "enabled": true
   },
   "riu": {
     "template": "item_riu",
     "news_template": "item_riu_news",
-    "enabled": false
-  },
-  "nuoc_ca_rot_ep": {
-    "template": "item_nuoc_ca_rot_ep",
-    "news_template": "item_nuoc_ca_rot_ep_news",
-    "enabled": false
+    "enabled": true
   },
   "bong_ngo_cay": {
     "template": "item_bong_ngo_cay",
     "news_template": "item_bong_ngo_cay_news",
-    "enabled": false
-  },
-  "thanh_bac": {
-    "template": "item_thanh_bac",
-    "news_template": "item_thanh_bac_news",
     "enabled": false
   },
   "bu_long": {
@@ -128,5 +118,75 @@
     "template": "item_vay_tim",
     "news_template": "item_vay_tim_news",
     "enabled": false
+  },
+  "duong_trang": {
+    "template": "item_duong_trang",
+    "news_template": "item_duong_trang_news",
+    "enabled": true
+  },
+  "bat_kem": {
+    "template": "item_bat_kem",
+    "news_template": "item_bat_kem_news",
+    "enabled": true
+  },
+  "mu_xanh": {
+    "template": "item_mu_xanh",
+    "news_template": "item_mu_xanh_news",
+    "enabled": false
+  },
+  "tnt": {
+    "template": "item_tnt",
+    "news_template": "item_tnt_news",
+    "enabled": true
+  },
+  "nuoc_ep_ca_rot": {
+    "template": "item_nuoc_ep_ca_rot",
+    "news_template": "item_nuoc_ep_ca_rot_news",
+    "enabled": false
+  },
+  "ao_len_xanh": {
+    "template": "item_ao_len_xanh",
+    "news_template": "item_ao_len_xanh_news",
+    "enabled": false
+  },
+  "muffin_ngo": {
+    "template": "item_muffin_ngo",
+    "news_template": "item_muffin_ngo_news",
+    "enabled": false
+  },
+  "hamburger": {
+    "template": "item_hamburger",
+    "news_template": "item_hamburger_news",
+    "enabled": false
+  },
+  "banh_bi_ngo": {
+    "template": "item_banh_bi_ngo",
+    "news_template": "item_banh_bi_ngo_news",
+    "enabled": false
+  },
+  "bang_dinh": {
+    "template": "item_bang_dinh",
+    "news_template": "item_bang_dinh_news",
+    "enabled": false
+  },
+  "min": {
+    "template": "item_min",
+    "news_template": "item_min_news",
+    "enabled": true
+  },
+  "banh_ca_rot": {
+    "template": "item_banh_ca_rot",
+    "news_template": "item_banh_ca_rot_news",
+    "enabled": false
+  },
+  "dinh_hop": {
+    "template": "item_dinh_hop",
+    "news_template": "item_dinh_hop_news",
+    "enabled": false
+  },
+  "siro": {
+    "template": "item_siro",
+    "news_template": "item_siro_news",
+    "enabled": true
   }
 }

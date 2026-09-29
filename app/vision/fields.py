@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 from app.state.field_state import FieldState, FieldStatus
-from app.vision.detector import DetectedObject
+from app.vision.detector import DetectedObject, box_iou
 from app.vision.regions import PLAY_AREA
 from app.vision.template_matcher import as_bgr
 from app.storage.logger import get_logger
@@ -114,8 +114,8 @@ class FieldDetector:
         ready = _blobs(ready_mask, FieldStatus.READY, x0, y0, min_area, max_area)
         empty = _blobs(empty_mask, FieldStatus.EMPTY, x0, y0, min_area, max_area)
         growing = _blobs(grow_mask, FieldStatus.GROWING, x0, y0, min_area, max_area)
-        empty = [box for box in empty if all(_iou(box, r) < 0.25 for r in ready)]
-        empty = [box for box in empty if all(_iou(box, g) < 0.45 for g in growing)]
+        empty = [box for box in empty if all(box_iou(box, r) < 0.25 for r in ready)]
+        empty = [box for box in empty if all(box_iou(box, g) < 0.45 for g in growing)]
         anchors = ready + empty
         growing = [box for box in growing if _near_any(box, anchors, max(w, h) * 0.22)]
         ordered = sorted(ready + empty + growing, key=lambda b: (b.y, b.x))
@@ -349,16 +349,6 @@ def _blobs(
             )
         )
     return found
-
-
-def _iou(a: FieldState, b: FieldState) -> float:
-    x1 = max(a.x, b.x)
-    y1 = max(a.y, b.y)
-    x2 = min(a.x + a.width, b.x + b.width)
-    y2 = min(a.y + a.height, b.y + b.height)
-    inter = max(0, x2 - x1) * max(0, y2 - y1)
-    union = a.width * a.height + b.width * b.height - inter
-    return inter / union if union else 0.0
 
 
 def _near_any(box: FieldState, others: list[FieldState], dist: float) -> bool:

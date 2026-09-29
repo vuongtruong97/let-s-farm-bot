@@ -364,6 +364,10 @@ def _config_dict(config: AppConfig | None = None) -> dict:
         "loop_rest_min": cfg.loop_rest_min,
         "action_wait_s": cfg.action_wait_s,
         "buy_wait_s": cfg.buy_wait_s,
+        "visit_wait_s": cfg.visit_wait_s,
+        "poll_interval_s": cfg.poll_interval_s,
+        "stall_swipe_ms": cfg.stall_swipe_ms,
+        "screencap_raw": cfg.screencap_raw,
     }
 
 
@@ -394,6 +398,15 @@ def _save_config(payload: dict) -> dict:
     buy_wait_s = float(payload.get("buy_wait_s", current.buy_wait_s))
     if not 0 <= buy_wait_s <= 10:
         raise ValueError("buy_wait_s must be 0–10")
+    visit_wait_s = float(payload.get("visit_wait_s", current.visit_wait_s))
+    if not 0 <= visit_wait_s <= 10:
+        raise ValueError("visit_wait_s must be 0–10")
+    poll_interval_s = float(payload.get("poll_interval_s", current.poll_interval_s))
+    if not 0 <= poll_interval_s <= 2:
+        raise ValueError("poll_interval_s must be 0–2")
+    stall_swipe_ms = int(payload.get("stall_swipe_ms", current.stall_swipe_ms))
+    if stall_swipe_ms < 50 or stall_swipe_ms > 3000:
+        raise ValueError("stall_swipe_ms must be 50–3000")
     swipe = int(payload.get("swipe_duration_ms", current.swipe_duration_ms))
     if swipe < 50 or swipe > 3000:
         raise ValueError("swipe_duration_ms must be 50–3000")
@@ -411,6 +424,10 @@ def _save_config(payload: dict) -> dict:
         loop_rest_min=loop_rest_min,
         action_wait_s=action_wait_s,
         buy_wait_s=buy_wait_s,
+        visit_wait_s=visit_wait_s,
+        poll_interval_s=poll_interval_s,
+        stall_swipe_ms=stall_swipe_ms,
+        screencap_raw=bool(payload.get("screencap_raw", current.screencap_raw)),
     )
     save_config(updated)
     return _config_dict(updated)

@@ -16,6 +16,10 @@ class DeviceError(RuntimeError):
     pass
 
 
+class DeviceTimeout(DeviceError):
+    """adb did not answer in time. The command may still have run."""
+
+
 BLUESTACKS_CONF_CANDIDATES = (
     Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "BlueStacks_nxt" / "bluestacks.conf",
     Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "BlueStacks" / "bluestacks.conf",
@@ -96,7 +100,7 @@ class AdbClient:
         except FileNotFoundError as exc:
             raise DeviceError(f"Không chạy được ADB: {self.adb_bin}") from exc
         except subprocess.TimeoutExpired as exc:
-            raise DeviceError(f"ADB hết thời gian: {' '.join(args)}") from exc
+            raise DeviceTimeout(f"ADB hết thời gian: {' '.join(args)}") from exc
         if completed.returncode != 0:
             err = (completed.stderr or b"").decode("utf-8", errors="ignore").strip()
             raise DeviceError(err or f"ADB lỗi ({completed.returncode}): {' '.join(args)}")

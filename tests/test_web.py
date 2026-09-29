@@ -296,6 +296,12 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     assert b"buy-history-modal" in page
     assert b"action_wait_s" in page
     assert b"buy_wait_s" in page
+    assert b"visit_wait_s" in page
+    assert b"poll_interval_s" in page
+    assert b"stall_swipe_ms" in page
+    assert b"timing-log" in page
+    assert b"timing-safety" in page
+    assert "Thời gian vòng shop".encode("utf-8") in page
     assert b"viewport-fit=cover" in page
     code, css = _request(f"{httpd}/static/style.css")
     assert code == 200
@@ -307,6 +313,9 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     assert b"buy-proof" in js
     assert b"qty_sum" in js
     assert "Tổng".encode("utf-8") in js
+    assert b"renderTiming" in js
+    assert b"deadline_hits" in js
+    assert b"timing-split" in css
 
     code, saved = _request(
         f"{httpd}/api/items",
@@ -351,6 +360,9 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
             "loop_rest_min": 5,
             "action_wait_s": 1.2,
             "buy_wait_s": 2.5,
+            "visit_wait_s": 1.9,
+            "poll_interval_s": 0.25,
+            "stall_swipe_ms": 240,
         },
     )
     assert code == 200
@@ -361,6 +373,9 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     assert cfg["config"]["loop_rest_min"] == 5.0
     assert cfg["config"]["action_wait_s"] == 1.2
     assert cfg["config"]["buy_wait_s"] == 2.5
+    assert cfg["config"]["visit_wait_s"] == 1.9
+    assert cfg["config"]["poll_interval_s"] == 0.25
+    assert cfg["config"]["stall_swipe_ms"] == 240
 
     code, err = _request(
         f"{httpd}/api/items",
@@ -622,6 +637,35 @@ def test_web_run_screenshot_and_unknown(httpd: str, data_home: Path, monkeypatch
     assert code == 400
 
 
+def test_snapshot_exposes_loop_timing():
+    from app.actions.timing import LoopTiming
+
+    rt = _runtime()
+    # No shop actor built yet, and stubs without a collector stay silent.
+    assert rt.snapshot()["timing"] is None
+
+    timing = LoopTiming()
+    timing.set_waits(buy_wait_s=1.2, visit_wait_s=2.5)
+    with timing.step("shop"):
+        with timing.step("visit_shop", deadline_s=2.5):
+            timing.mark("visit_fail")
+            timing.deadline_hit("visit_shop")
+
+    class _Actor:
+        pass
+
+    actor = _Actor()
+    actor.timing = timing
+    rt._news = actor
+    snap = rt.snapshot()["timing"]
+    assert snap["shop_n"] == 1
+    assert snap["steps"]["visit_shop"]["n"] == 1
+    assert snap["steps"]["visit_shop"]["deadline_s"] == 2.5
+    assert snap["steps"]["visit_shop"]["deadline_hits"] == 1
+    assert snap["safety"]["visit_fail"] == 1
+    assert snap["waits"]["buy_wait_s"] == 1.2
+
+
 def test_web_run_newspaper_step(httpd: str, data_home: Path, monkeypatch: pytest.MonkeyPatch):
     rt = _runtime()
     monkeypatch.setattr("app.web.server.RUNTIME", rt)
@@ -748,3 +792,237 @@ def test_web_loop_skips_rest_when_column_not_found(
     assert snap["status"] == "idle"
     assert rests == []
 
+
+
+def test_runtime_farming_shares_newspaper_matcher(data_home: Path):
+    from app.web.runtime import BotRuntime
+    from types import SimpleNamespace
+
+    seen: list[dict] = []
+
+    class RecordingFarming(_StubFarming):
+        def __init__(self, device, config=None, **kwargs):
+            super().__init__(device, config)
+            seen.append(kwargs)
+
+    class NewsWithMatcher(_StubNews):
+        def __init__(self, device, config=None, **kwargs):
+            self.device = device
+            self.matcher = SimpleNamespace(threshold=0.8)
+            self.screens = SimpleNamespace()
+
+    runtime = BotRuntime(
+        device_factory=lambda cfg: _FakeCtl(),
+        farming_cls=RecordingFarming,
+        newspaper_cls=NewsWithMatcher,
+    )
+    runtime._ensure_device()
+    news = runtime._newspaper_actor()
+    runtime._farming_actor()
+    runtime._farming_actor()
+    assert [kw["matcher"] for kw in seen] == [news.matcher, news.matcher]
+    assert all(kw["screens"] is news.screens for kw in seen)
+
+
+def test_loop_survives_an_adb_hiccup(data_home: Path, monkeypatch):
+    from app.actions.farming import Action, ActionResult
+    from app.controller.adb import DeviceTimeout
+    from app.web.runtime import BotRuntime
+
+    monkeypatch.setattr("app.web.runtime.LOOP_ADB_WAIT_S", 0)
+    rounds: list[str] = []
+
+    class FlakyFarming(_StubFarming):
+        def harvest_ready_fields(self, limit=1, should_stop=None):
+            rounds.append("harvest")
+            if len(rounds) == 1:
+                raise DeviceTimeout("ADB hết thời gian: exec-out screencap")
+            if len(rounds) >= 3:
+                runtime.stop()
+            return ActionResult(True, Action("HARVEST", "ok"))
+
+    runtime = BotRuntime(
+        device_factory=lambda cfg: _FakeCtl(),
+        farming_cls=FlakyFarming,
+        newspaper_cls=_StubNews,
+        loop_pause_s=0,
+    )
+    runtime.start("loop", {"harvest": True, "plant": False})
+    snap = _wait_idle(runtime)
+    assert len(rounds) >= 3
+    assert snap["status"] == "idle"
+    assert snap["last_error"] is None
+
+
+def test_loop_restarts_the_game_when_adb_keeps_failing(data_home: Path, monkeypatch):
+    """Each run of LOOP_ADB_FAILURES errors earns one game restart; past the
+    hourly cap the loop stops with the reason."""
+    from app.controller.adb import DeviceTimeout
+    from app.web.runtime import LOOP_ADB_FAILURES, LOOP_MAX_RESTARTS_PER_HOUR
+
+    calls: list[int] = []
+
+    class DeadFarming(_StubFarming):
+        def harvest_ready_fields(self, limit=1, should_stop=None):
+            calls.append(1)
+            raise DeviceTimeout("ADB hết thời gian: exec-out screencap")
+
+    ctl = _GameCtl()
+    runtime = _recovering_runtime(ctl, DeadFarming, monkeypatch)
+    runtime.start("loop", {"harvest": True, "plant": False})
+    snap = _wait_idle(runtime, timeout=5.0)
+    assert len(ctl.launched) == LOOP_MAX_RESTARTS_PER_HOUR
+    assert len(calls) == LOOP_ADB_FAILURES * (LOOP_MAX_RESTARTS_PER_HOUR + 1)
+    assert snap["status"] == "error"
+    assert "restarted" in snap["last_error"]
+    assert "hết thời gian" in snap["last_error"]
+
+
+class _FakeScreens:
+    def __init__(self, screens):
+        self.screens = list(screens)
+
+    def detect(self, _png):
+        from app.vision.screen import GameScreen, ScreenDetection
+
+        name = self.screens.pop(0) if len(self.screens) > 1 else self.screens[0]
+        return ScreenDetection(GameScreen[name], 1.0, [])
+
+
+class _GameCtl(_FakeCtl):
+    def __init__(self, cfg=None, front="letsfarm.com.playday"):
+        super().__init__(cfg)
+        self.front = front
+        self.stopped: list[str] = []
+        self.launched: list[str] = []
+
+    def force_stop(self, package=None):
+        self.stopped.append(package)
+
+    def launch_app(self, package=None):
+        self.launched.append(package)
+        self.front = package
+
+    def foreground_package(self):
+        return self.front
+
+
+def test_restart_game_waits_for_the_farm():
+    from app.actions.game import restart_game
+
+    ctl = _GameCtl()
+    result = restart_game(
+        ctl, _FakeScreens(["UNKNOWN", "UNKNOWN", "FARM"]), "letsfarm.com.playday",
+        sleep=lambda _s: None,
+    )
+    assert result.success
+    assert ctl.stopped == ["letsfarm.com.playday"]
+    assert ctl.launched == ["letsfarm.com.playday"]
+
+
+def test_restart_game_gives_up_after_its_timeout():
+    from app.actions.game import restart_game
+
+    result = restart_game(
+        _GameCtl(), _FakeScreens(["UNKNOWN"]), "letsfarm.com.playday",
+        timeout_s=0, sleep=lambda _s: None,
+    )
+    assert not result.success
+    assert "farm not shown" in result.error
+
+
+def test_restart_game_job_from_the_web(data_home: Path, monkeypatch):
+    from app.web.runtime import BotRuntime
+
+    ctl = _GameCtl()
+    monkeypatch.setattr("app.actions.game.time.sleep", lambda _s: None)
+    runtime = BotRuntime(
+        device_factory=lambda cfg: ctl, farming_cls=_StubFarming, newspaper_cls=_StubNews
+    )
+    monkeypatch.setattr(
+        "app.web.runtime.ScreenDetector", lambda *a, **k: _FakeScreens(["FARM"])
+    )
+    runtime.start("restart_game", {})
+    snap = _wait_idle(runtime)
+    assert snap["last_result"]["action"] == "RESTART_GAME"
+    assert snap["last_result"]["ok"] is True
+    assert ctl.launched == ["letsfarm.com.playday"]
+
+
+def _recovering_runtime(ctl, farming_cls, monkeypatch):
+    from app.web.runtime import BotRuntime
+
+    monkeypatch.setattr("app.web.runtime.LOOP_ADB_WAIT_S", 0)
+    monkeypatch.setattr("app.actions.game.time.sleep", lambda _s: None)
+    monkeypatch.setattr(
+        "app.web.runtime.ScreenDetector", lambda *a, **k: _FakeScreens(["FARM"])
+    )
+    return BotRuntime(
+        device_factory=lambda cfg: ctl,
+        farming_cls=farming_cls,
+        newspaper_cls=_StubNews,
+        loop_pause_s=0,
+    )
+
+
+def test_loop_restarts_a_game_that_is_not_in_front(data_home: Path, monkeypatch):
+    from app.actions.farming import Action, ActionResult
+
+    ctl = _GameCtl(front="com.bluestacks.launcher")
+    rounds: list[int] = []
+
+    class Farming(_StubFarming):
+        def harvest_ready_fields(self, limit=1, should_stop=None):
+            rounds.append(1)
+            runtime.stop()
+            return ActionResult(True, Action("HARVEST", "ok"))
+
+    runtime = _recovering_runtime(ctl, Farming, monkeypatch)
+    runtime.start("loop", {"harvest": True, "plant": False})
+    snap = _wait_idle(runtime)
+    # Restarted before any tap landed on the launcher, then played a round.
+    assert ctl.launched == ["letsfarm.com.playday"]
+    assert rounds == [1]
+    assert snap["status"] == "idle"
+
+
+def test_loop_restarts_after_rounds_that_never_reach_the_farm(
+    data_home: Path, monkeypatch
+):
+    from app.actions.farming import Action, ActionResult
+    from app.web.runtime import LOOP_STUCK_ROUNDS
+
+    ctl = _GameCtl()
+    homes: list[int] = []
+
+    class LostNews(_StubNews):
+        def go_home(self):
+            homes.append(1)
+            if ctl.launched:
+                runtime.stop()
+                return ActionResult(True, Action("GO_HOME", "house"))
+            return ActionResult(False, Action("GO_HOME", "house"), "farm not drawn")
+
+    runtime = _recovering_runtime(ctl, _StubFarming, monkeypatch)
+    runtime.newspaper_cls = LostNews
+    runtime.start("loop", {"harvest": True, "plant": False})
+    snap = _wait_idle(runtime)
+    assert ctl.launched == ["letsfarm.com.playday"]
+    assert len(homes) == LOOP_STUCK_ROUNDS + 1
+    assert snap["status"] == "idle"
+
+
+def test_loop_gives_up_after_too_many_restarts(data_home: Path, monkeypatch):
+    from app.web.runtime import LOOP_MAX_RESTARTS_PER_HOUR
+
+    class Crashing(_GameCtl):
+        def launch_app(self, package=None):
+            self.launched.append(package)  # the game never stays up
+
+    ctl = Crashing(front="com.bluestacks.launcher")
+    runtime = _recovering_runtime(ctl, _StubFarming, monkeypatch)
+    runtime.start("loop", {"harvest": True, "plant": False})
+    snap = _wait_idle(runtime, timeout=5.0)
+    assert len(ctl.launched) == LOOP_MAX_RESTARTS_PER_HOUR
+    assert snap["status"] == "error"
+    assert "restarted" in snap["last_error"]

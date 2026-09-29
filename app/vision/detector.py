@@ -18,6 +18,17 @@ class DetectedObject:
     state: str | None = None
 
 
+def box_iou(a, b) -> float:
+    """Intersection over union of two boxes with x, y, width, height."""
+    x1 = max(a.x, b.x)
+    y1 = max(a.y, b.y)
+    x2 = min(a.x + a.width, b.x + b.width)
+    y2 = min(a.y + a.height, b.y + b.height)
+    inter = max(0, x2 - x1) * max(0, y2 - y1)
+    union = a.width * a.height + b.width * b.height - inter
+    return inter / union if union else 0.0
+
+
 def match_to_object(match: TemplateMatch) -> DetectedObject:
     kind = "ui"
     state = None
