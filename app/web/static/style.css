@@ -194,31 +194,16 @@ dialog.modal::-webkit-scrollbar-track {
   max-width: 1200px;
   margin: 0 auto;
 }
+/* Tabs are 3D game buttons (see "3D buttons"); the open page's is green. */
 .nav a {
   text-decoration: none;
-  color: #fff;
-  text-shadow: var(--game-text-sm);
-  background: linear-gradient(180deg, var(--orange-1) 0%, var(--orange-2) 100%);
-  border: 3px solid var(--cream);
   border-radius: 999px;
   padding: 5px 16px 4px;
   font-size: 15px;
   font-weight: 800;
   letter-spacing: 0.02em;
-  box-shadow: 0 3px 0 var(--orange-edge), 0 5px 8px rgba(0, 0, 0, 0.25);
   white-space: nowrap;
   -webkit-tap-highlight-color: transparent;
-  transition: transform 0.08s, filter 0.15s;
-}
-.nav a:hover {
-  filter: brightness(1.06);
-}
-.nav a:active {
-  transform: translateY(2px);
-}
-.nav a.active {
-  background: linear-gradient(180deg, var(--green-1) 0%, var(--green-2) 100%);
-  box-shadow: 0 3px 0 var(--green-edge), 0 5px 8px rgba(0, 0, 0, 0.25);
 }
 
 .top {
@@ -273,22 +258,16 @@ dialog.modal::-webkit-scrollbar-track {
 .pill.err::before {
   background: var(--red-1);
 }
-/* HUD round buttons (share, notify): orange with a cream ring. */
+/* HUD buttons (share, notify) are 3D game buttons, not counters. */
 .pill-btn {
   font: inherit;
   font-size: 14px;
   font-weight: 800;
   cursor: pointer;
-  background: linear-gradient(180deg, var(--orange-1) 0%, var(--orange-2) 100%);
-  border: 3px solid var(--cream);
-  box-shadow: 0 3px 0 var(--orange-edge), 0 5px 8px rgba(0, 0, 0, 0.25);
   padding: 4px 14px 3px;
 }
 .pill-btn::before {
   display: none;
-}
-.pill-btn:active {
-  transform: translateY(2px);
 }
 .eyebrow {
   margin: 0 0 2px;
@@ -583,22 +562,114 @@ input[type='radio'] {
   color: #a58b6c;
 }
 
-/* Game button: glossy pill, cream ring, darker lip that squashes on press. */
+/* ------------------------------------------------------------ 3D buttons */
+
+/* Built like the game's round close button, outside in: a thick white ring
+   shaded at the bottom, a convex bezel (light top, dark bottom), a thin light
+   seam, then a concave face lit the other way (dark top, glowing bottom).
+   Colour and size come in through --b-*, so every button shares one recipe;
+   the palette is orange unless a rule below says otherwise. */
+.btn,
+.file-btn,
+.chip,
+.nav a,
+.pill-btn,
+.modal-x,
+.chip-check span,
+.fold > summary::before {
+  --b-rim-hi: #ffc65a;
+  --b-rim-mid: #f7931e;
+  --b-rim-lo: #b54f00;
+  --b-face-top: #e76a05;
+  --b-face: #f5870f;
+  --b-glow: #ffb54d;
+  --b-ink: #4a1f00;
+  --b-ring: 3px;
+  --b-rim: 3px;
+  --b-drop: 0 3px 0 rgba(90, 40, 10, 0.28), 0 6px 10px rgba(0, 0, 0, 0.22);
+  --b-focus: 0 0 0 0 transparent;
+  border: var(--b-ring) solid transparent;
+  background: linear-gradient(180deg, var(--b-face-top) 0%, var(--b-face) 45%, var(--b-face) 68%, var(--b-glow) 100%) padding-box,
+    linear-gradient(180deg, #fff 0%, #fff 55%, #e4cfd5 100%) border-box;
+  box-shadow: inset 0 var(--b-rim) 0 var(--b-rim-hi), inset 0 calc(-1 * var(--b-rim)) 0 var(--b-rim-lo),
+    inset var(--b-rim) 0 0 var(--b-rim-mid), inset calc(-1 * var(--b-rim)) 0 0 var(--b-rim-mid),
+    inset 0 0 0 calc(var(--b-rim) + 1px) rgba(255, 255, 255, 0.35), var(--b-focus), var(--b-drop);
+  color: #fff;
+  text-shadow: 0 2px 0 var(--b-ink), 0 -1px 0 var(--b-ink), 1.5px 0 0 var(--b-ink), -1.5px 0 0 var(--b-ink),
+    1px 1px 0 var(--b-ink), -1px 1px 0 var(--b-ink), 1px -1px 0 var(--b-ink), -1px -1px 0 var(--b-ink);
+  transition: transform 0.06s, box-shadow 0.06s, filter 0.15s;
+}
+.btn:hover:not(:disabled),
+.file-btn:hover,
+.chip:hover,
+.nav a:hover,
+.pill-btn:hover,
+.modal-x:hover {
+  filter: brightness(1.06);
+}
+/* Pressed: the button sinks onto its lip. */
+.btn:active:not(:disabled),
+.file-btn:active,
+.chip:active,
+.nav a:active,
+.pill-btn:active,
+.modal-x:active {
+  --b-drop: 0 1px 0 rgba(90, 40, 10, 0.28), 0 2px 4px rgba(0, 0, 0, 0.2);
+  transform: translateY(2px) scale(0.98);
+}
+.btn:focus-visible,
+.file-btn:focus-within,
+.chip:focus-visible,
+.nav a:focus-visible,
+.pill-btn:focus-visible,
+.modal-x:focus-visible,
+.chip-check input:focus-visible + span {
+  --b-focus: var(--focus);
+}
+.btn.primary,
+.nav a.active,
+.chip.active {
+  --b-rim-hi: #b8ef6e;
+  --b-rim-mid: #6cc22e;
+  --b-rim-lo: #2b700c;
+  --b-face-top: #3c9612;
+  --b-face: #52b21f;
+  --b-glow: #93dd55;
+  --b-ink: #0f2e03;
+}
+/* Colours sampled off the game's own red close button. */
+.btn.danger,
+.btn.danger.solid,
+.modal-x {
+  --b-rim-hi: #ff5b55;
+  --b-rim-mid: #e23a2c;
+  --b-rim-lo: #a81f06;
+  --b-face-top: #d4220a;
+  --b-face: #e8392a;
+  --b-glow: #ff7068;
+  --b-ink: #3a0a16;
+}
+.btn:disabled,
+.btn.primary:disabled,
+.btn.danger:disabled,
+.btn.danger.solid:disabled {
+  --b-rim-hi: #efeae2;
+  --b-rim-mid: #c9c1b5;
+  --b-rim-lo: #857c70;
+  --b-face-top: #a59c90;
+  --b-face: #b6aea2;
+  --b-glow: #d6d0c6;
+  --b-ink: #4a433b;
+  cursor: not-allowed;
+}
+
 .btn,
 .file-btn {
-  --btn-1: var(--orange-1);
-  --btn-2: var(--orange-2);
-  --btn-edge: var(--orange-edge);
   position: relative;
   font: inherit;
   font-size: 15px;
   font-weight: 800;
   letter-spacing: 0.01em;
-  color: #fff;
-  text-shadow: var(--game-text-sm);
-  border: 3px solid var(--cream);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.28) 45%, rgba(255, 255, 255, 0) 46%),
-    linear-gradient(180deg, var(--btn-1) 0%, var(--btn-2) 100%);
   border-radius: 999px;
   padding: 6px 18px 5px;
   cursor: pointer;
@@ -608,61 +679,30 @@ input[type='radio'] {
   line-height: 1.25;
   white-space: normal;
   overflow-wrap: anywhere;
-  box-shadow: 0 4px 0 var(--btn-edge), 0 6px 10px rgba(80, 40, 0, 0.25);
-  transition: transform 0.06s, box-shadow 0.06s, filter 0.15s;
-}
-.btn:hover:not(:disabled),
-.file-btn:hover {
-  filter: brightness(1.07);
-}
-.btn:active:not(:disabled),
-.file-btn:active {
-  transform: translateY(3px);
-  box-shadow: 0 1px 0 var(--btn-edge), 0 2px 4px rgba(80, 40, 0, 0.25);
-}
-.btn.primary {
-  --btn-1: var(--green-1);
-  --btn-2: var(--green-2);
-  --btn-edge: var(--green-edge);
-}
-.btn.danger,
-.btn.danger.solid {
-  --btn-1: var(--red-1);
-  --btn-2: var(--red-2);
-  --btn-edge: var(--red-edge);
-}
-.btn:disabled {
-  --btn-1: var(--grey-1);
-  --btn-2: var(--grey-2);
-  --btn-edge: var(--grey-edge);
-  cursor: not-allowed;
-  color: #f6f2ea;
 }
 .btn.big {
+  --b-ring: 4px;
+  --b-rim: 4px;
   padding: 9px 26px 8px;
   font-size: 19px;
-  border-width: 4px;
 }
 .btn-compact {
+  --b-ring: 2px;
+  --b-rim: 2px;
   padding: 2px 12px 1px;
   font-size: 13px;
-  border-width: 2px;
-  box-shadow: 0 3px 0 var(--btn-edge), 0 4px 6px rgba(80, 40, 0, 0.2);
 }
 
 .chip {
+  --b-ring: 2px;
+  --b-rim: 2px;
   font: inherit;
   font-size: 14px;
   font-weight: 800;
-  color: #fff;
-  text-shadow: var(--game-text-sm);
-  border: 2px solid var(--cream);
-  background: linear-gradient(180deg, var(--orange-1) 0%, var(--orange-2) 100%);
   border-radius: 999px;
   padding: 3px 13px 2px;
   cursor: pointer;
   white-space: nowrap;
-  box-shadow: 0 3px 0 var(--orange-edge);
 }
 .chip span {
   display: inline-block;
@@ -677,14 +717,6 @@ input[type='radio'] {
 }
 .chip span:empty {
   display: none;
-}
-.chip.active {
-  background: linear-gradient(180deg, var(--green-1) 0%, var(--green-2) 100%);
-  box-shadow: 0 3px 0 var(--green-edge);
-}
-.chip:active {
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 var(--orange-edge);
 }
 
 .row {
@@ -884,28 +916,42 @@ input[type='radio'] {
   opacity: 0;
   pointer-events: none;
 }
-/* Like the game's "Small UI ✓": an orange button with a green tick when on. */
+/* Like the game's "Small UI ✓": a 3D button, cream while off, orange with a
+   green tick when on. */
 .chip-check span {
+  --b-rim-hi: #fffaf0;
+  --b-rim-mid: #f1e4c2;
+  --b-rim-lo: #c9ad72;
+  --b-face-top: #eadbb2;
+  --b-face: #f4e6c4;
+  --b-glow: #fff6de;
   position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 6px 18px 5px 18px;
   border-radius: 999px;
-  border: 3px solid var(--cream);
-  background: #f4e3b8;
   font-size: 16px;
   font-weight: 800;
   color: var(--ink-soft);
-  box-shadow: 0 4px 0 #c9ad72;
-  transition: background 0.15s, color 0.15s, padding 0.15s;
+  text-shadow: none;
 }
 .chip-check input:checked + span {
+  --b-rim-hi: #ffc65a;
+  --b-rim-mid: #f7931e;
+  --b-rim-lo: #b54f00;
+  --b-face-top: #e76a05;
+  --b-face: #f5870f;
+  --b-glow: #ffb54d;
+  --b-ink: #4a1f00;
   padding-left: 38px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0 45%, rgba(255, 255, 255, 0) 46%), linear-gradient(180deg, var(--orange-1) 0%, var(--orange-2) 100%);
   color: #fff;
-  text-shadow: var(--game-text-sm);
-  box-shadow: 0 4px 0 var(--orange-edge);
+  text-shadow: 0 2px 0 var(--b-ink), 0 -1px 0 var(--b-ink), 1.5px 0 0 var(--b-ink), -1.5px 0 0 var(--b-ink),
+    1px 1px 0 var(--b-ink), -1px 1px 0 var(--b-ink), 1px -1px 0 var(--b-ink), -1px -1px 0 var(--b-ink);
+}
+.chip-check:active span {
+  --b-drop: 0 1px 0 rgba(90, 40, 10, 0.28), 0 2px 4px rgba(0, 0, 0, 0.2);
+  transform: translateY(2px) scale(0.98);
 }
 .chip-check input:checked + span::before {
   content: '';
@@ -916,9 +962,6 @@ input[type='radio'] {
   height: 26px;
   transform: translateY(-58%) rotate(-6deg);
   background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 17l8 8L29 5' fill='none' stroke='%232f7a0e' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/><path d='M4 17l8 8L29 5' fill='none' stroke='%237fd23a' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/></svg>") center / contain no-repeat;
-}
-.chip-check input:focus-visible + span {
-  box-shadow: var(--focus);
 }
 .field-grid {
   display: grid;
@@ -934,8 +977,46 @@ input[type='radio'] {
   margin: 0;
   min-height: 1em;
 }
-.main-actions {
-  margin-top: 14px;
+.loop-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.loop-row .main-actions {
+  flex: 1 1 100%;
+  flex-wrap: nowrap;
+}
+.main-actions .btn {
+  flex: 1 1 0;
+  white-space: nowrap;
+}
+#prefs-status:empty {
+  display: none;
+}
+.prefs-summary {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+.fold > .field-grid,
+.fold > .once-grid {
+  margin-top: 10px;
+}
+.once-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+.once-grid .btn {
+  width: 100%;
 }
 
 /* ------------------------------------------------------------ dev steps */
@@ -1068,18 +1149,17 @@ input[type='radio'] {
 .fold > summary::-webkit-details-marker {
   display: none;
 }
+/* A small round 3D button (see "3D buttons"). */
 .fold > summary::before {
+  --b-ring: 2px;
+  --b-rim: 2px;
   content: '▸';
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  color: #fff;
   font-size: 14px;
-  background: linear-gradient(180deg, var(--orange-1), var(--orange-2));
-  border: 2px solid #fff;
-  box-shadow: 0 2px 0 var(--orange-edge);
   transition: transform 0.15s;
 }
 .fold[open] > summary::before {
@@ -1386,13 +1466,62 @@ input[type='radio'] {
   padding: 16px;
   text-align: center;
 }
-.viewport-btn {
+.viewport-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 10px 0;
+}
+/* Round icon buttons. Like the close button, the label is empty and the icon
+   is drawn by ::after; here the icon is a mask filled with the same white
+   gradient and outlined in the button's own ink colour, so it follows the
+   theme. The toggle swaps its icon with aria-pressed. */
+.btn-round {
+  flex: 0 0 44px;
+  box-sizing: border-box;
+  width: 44px;
+  height: 44px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0;
+  color: transparent;
+  text-shadow: none;
+}
+#btn-shot {
+  --icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><path fill-rule='evenodd' d='M14 9h12l2.5 4H33a4 4 0 0 1 4 4v14a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V17a4 4 0 0 1 4-4h4.5z M20 17a7.5 7.5 0 1 0 0 15a7.5 7.5 0 1 0 0-15z M20 21a3.5 3.5 0 1 1 0 7a3.5 3.5 0 1 1 0-7z'/></svg>");
+}
+#btn-screen-toggle[aria-pressed='true'] {
+  --icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><path fill-rule='evenodd' d='M20 9C11 9 4.5 15.5 2 20c2.5 4.5 9 11 18 11s15.5-6.5 18-11C35.5 15.5 29 9 20 9z M20 13a7 7 0 1 0 0 14a7 7 0 1 0 0-14z M20 17a3 3 0 1 1 0 6a3 3 0 1 1 0-6z'/></svg>");
+}
+#btn-screen-toggle[aria-pressed='false'] {
+  --icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><path fill-rule='evenodd' d='M20 9C11 9 4.5 15.5 2 20c2.5 4.5 9 11 18 11s15.5-6.5 18-11C35.5 15.5 29 9 20 9z M20 13a7 7 0 1 0 0 14a7 7 0 1 0 0-14z M20 17a3 3 0 1 1 0 6a3 3 0 1 1 0-6z'/><rect x='17.5' y='0' width='5' height='40' rx='2.5' transform='rotate(-45 20 20)'/></svg>");
+}
+.btn-round::after {
+  content: '';
   position: absolute;
-  right: 10px;
-  bottom: 12px;
-  z-index: 2;
-  padding: 3px 14px 2px;
-  font-size: 14px;
+  inset: 8px;
+  background: linear-gradient(180deg, #fff 0%, #d9ccd2 100%);
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+  filter: drop-shadow(1.2px 0 0 var(--b-ink)) drop-shadow(-1.2px 0 0 var(--b-ink)) drop-shadow(0 1.2px 0 var(--b-ink))
+    drop-shadow(0 -1.2px 0 var(--b-ink));
+  pointer-events: none;
+}
+.live-panel.screen-off #frame-age {
+  display: none;
+}
+.log-fold > summary .btn {
+  margin-left: auto;
+  padding: 2px 12px 1px;
+  font-size: 13px;
+}
+.log-fold .log {
+  margin-top: 8px;
+}
+.log.tall {
+  max-height: min(70vh, 560px);
 }
 .log {
   margin: 0;
@@ -1419,11 +1548,20 @@ input[type='radio'] {
   color: #b9f08a;
 }
 #run-note {
-  margin: 8px 0;
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  padding: 5px 14px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
   overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.3;
   background: rgba(255, 246, 220, 0.7);
-  border-radius: 10px;
-  padding: 4px 10px;
+  border-radius: 22px;
 }
 #run-note:empty {
   display: none;
@@ -1437,7 +1575,21 @@ input[type='radio'] {
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
-  margin: 18px 0 6px;
+  margin: 10px 0 8px;
+}
+/* The summary line stays readable when the history is folded shut. */
+.fold .buy-summary {
+  margin: 0 0 0 auto;
+  color: var(--ink-soft);
+  text-shadow: none;
+}
+.fold .buy-summary b {
+  color: var(--ink);
+  font-size: 14px;
+  text-shadow: none;
+}
+.fold > summary > h3.buy-heading {
+  margin: 0;
 }
 .buy-heading {
   margin: 0;
@@ -1769,34 +1921,32 @@ dialog.modal .muted {
   padding: 6px 10px;
   margin: 0 0 8px;
 }
+/* The game's round red close button (see "3D buttons"). The "✖" in the
+   markup stays for screen readers; the cross itself is drawn: a chunky
+   rounded X, white going grey at the bottom, with a maroon outline. */
 .modal-x {
+  --b-ring: 4px;
+  --b-rim: 4px;
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 6px;
+  right: 6px;
   z-index: 3;
-  width: 40px;
-  height: 40px;
+  width: 46px;
+  height: 46px;
   padding: 0;
-  display: grid;
-  place-items: center;
   border-radius: 50%;
-  border: 3px solid #fff;
-  background: radial-gradient(circle at 50% 30%, var(--red-1) 0%, var(--red-2) 70%);
-  box-shadow: 0 3px 0 var(--red-edge), 0 4px 8px rgba(0, 0, 0, 0.3);
-  color: #fff;
-  font: inherit;
-  font-size: 20px;
-  font-weight: 800;
-  line-height: 1;
-  text-shadow: 0 1px 0 var(--red-edge);
+  font-size: 0;
+  color: transparent;
+  text-shadow: none;
   cursor: pointer;
 }
-.modal-x:hover {
-  filter: brightness(1.08);
-}
-.modal-x:active {
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 var(--red-edge);
+.modal-x::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><defs><linearGradient id='g' gradientUnits='userSpaceOnUse' x1='0' y1='18' x2='0' y2='34' gradientTransform='rotate(-45 20 20)'><stop offset='0' stop-color='%23ffffff'/><stop offset='1' stop-color='%23d9ccd2'/></linearGradient></defs><g transform='rotate(45 20 20)'><rect x='15' y='5' width='10' height='30' rx='5' fill='%236b1429' stroke='%236b1429' stroke-width='4'/><rect x='5' y='15' width='30' height='10' rx='5' fill='%236b1429' stroke='%236b1429' stroke-width='4'/><rect x='15' y='5' width='10' height='30' rx='5' fill='url(%23g)'/><rect x='5' y='15' width='30' height='10' rx='5' fill='url(%23g)'/></g></svg>")
+    center / contain no-repeat;
+  pointer-events: none;
 }
 #library-picker {
   width: min(640px, calc(100vw - 32px));
@@ -1945,6 +2095,9 @@ dialog.modal .muted {
   }
   .pill-btn {
     grid-column: 1 / -1;
+    /* Same touch height as the theme picker, which is a form field. */
+    min-height: 44px;
+    justify-content: center;
   }
   h1 {
     font-size: clamp(22px, 7vw, 30px);
@@ -2038,6 +2191,9 @@ dialog.modal .muted {
   .log {
     max-height: 140px;
     overflow-x: auto;
+  }
+  .live-panel .log.tall {
+    max-height: min(60vh, 420px);
   }
   .timing-scroll {
     max-height: 200px;
@@ -2137,4 +2293,18 @@ dialog.modal .muted {
     animation: none !important;
     transition: none !important;
   }
+}
+
+.theme-select {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: center;
+  padding-right: 14px;
+}
+.theme-select option {
+  color: var(--ink);
+  background: var(--cream);
+  text-shadow: none;
 }

@@ -855,6 +855,11 @@ class NewspaperActions:
         bought = 0
         matched: set[str] = set()
         skipped: list[ShopSlot] = []
+        # Crates bought in the window on screen. Its price tag goes at once but
+        # the crate only greys a moment later, and the stall may still creep a
+        # few px: the next look would take it for a fresh crate and count the
+        # same buy twice.
+        taken: list[ShopSlot] = []
 
         def sweep(png) -> tuple[object, str]:
             """Buy out each window from the left edge to the right one.
@@ -871,11 +876,12 @@ class NewspaperActions:
                 if should_stop and should_stop():
                     return png, "stop"
                 with self.timing.step("find_slots"):
-                    slots = [
-                        slot
-                        for slot in self.news.find_slots(png, ready)
-                        if not _slot_skipped(slot, skipped)
-                    ]
+                    slots = []
+                    for slot in self.news.find_slots(png, ready):
+                        if _slot_skipped(slot, taken):
+                            log.info(f"slot skip {slot.item} just bought {slot.x},{slot.y}")
+                        elif not _slot_skipped(slot, skipped):
+                            slots.append(slot)
                 if slots:
                     for slot in slots:
                         if slot.item not in matched:
@@ -894,6 +900,7 @@ class NewspaperActions:
                             png = self._verify_frame()
                             continue
                         self._pending_buys.append((slot.item, "buy", proof, qty))
+                        taken.append(slot)
                         last = result
                         bought += 1
                         if max_buys is not None and bought >= max_buys:
@@ -907,7 +914,11 @@ class NewspaperActions:
                 pan = self._stall_pan(png, "right", confirm=fresh)
                 fresh = False
                 png = pan.png
-                if not pan.moved:
+                if pan.moved:
+                    # New window: old positions mean nothing now, and the
+                    # swipe and settle outlast the greying.
+                    taken.clear()
+                else:
                     if pan.dx < STALL_STILL_PX:
                         return png, "edge"
                     # The table crept against its edge without carrying a whole

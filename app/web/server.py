@@ -6,7 +6,7 @@ import json
 import socket
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from app.config import AppConfig, load_config, save_config
 from app.storage import botdata
@@ -67,20 +67,18 @@ class BotWebHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"urls": urls, "local_only": local_only, "port": port})
             return
         if path == "/api/status":
-            # What the page polls while the bot runs: no template or library
-            # listing, which would re-read every PNG each second.
-            self._send_json(
-                200,
-                {"run": RUNTIME.snapshot(), "wishlist_buys": botdata.wishlist_buy_status()},
-            )
+            self._send_json(200, _status(parse_qs(parsed.query)))
             return
-        if path == "/api/frame.png":
-            frame = RUNTIME.frame_png()
+        if path in ("/api/frame.png", "/api/frame.jpg"):
+            # The live panel shows the small JPEG; the PNG is the full-size
+            # original behind "open in a new tab".
+            jpeg = path.endswith(".jpg")
+            frame = RUNTIME.frame_jpeg() if jpeg else RUNTIME.frame_png()
             if not frame:
                 self._send_json(404, {"error": "no screenshot yet"})
                 return
             self.send_response(200)
-            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Type", "image/jpeg" if jpeg else "image/png")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(frame)))
             self.end_headers()
@@ -426,7 +424,26 @@ def _state() -> dict:
         "run_prefs": botdata.load_run_prefs(),
         "purchases": botdata.list_purchases(),
         "wishlist_buys": botdata.wishlist_buy_status(),
+        "buys_rev": botdata.buys_revision(),
     }
+
+
+def _status(query: dict[str, list[str]]) -> dict:
+    """What the page polls every second while the bot runs.
+
+    The page sends back the log_seq and buys_rev it already holds; the log
+    and the purchase history ride along only when they moved, so a quiet poll
+    is ~1 KB and reads no file (the full history re-reads purchases.json and
+    every item PNG, ~20 KB).
+    """
+    have_log = (query.get("log") or [None])[0]
+    have_buys = (query.get("buys") or [""])[0]
+    out: dict = {"run": RUNTIME.snapshot(known_log_seq=have_log)}
+    rev = botdata.buys_revision()
+    out["buys_rev"] = rev
+    if have_buys != rev:
+        out["wishlist_buys"] = botdata.wishlist_buy_status()
+    return out
 
 
 class BotHTTPServer(ThreadingHTTPServer):

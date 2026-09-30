@@ -68,6 +68,7 @@ function showPage(name, push) {
   $("page-title").textContent = PAGE_META[name].title;
   $("page-lede").textContent = PAGE_META[name].lede;
   updateTitle();
+  loadFrameIfVisible();
   if (push) {
     const link = document.querySelector(`[data-nav="${name}"]`);
     const href = (link && link.getAttribute("href")) || "/control";
@@ -101,6 +102,32 @@ function localSet(key, value) {
     /* private mode: the choice just is not remembered */
   }
 }
+
+// Looks the header selector offers. Each id needs a matching block in themes.css
+// (the default one is the plain :root palette in style.css).
+const THEMES = [
+  { id: "farm", label: "🌾 Nông trại", color: "#4b9427" },
+  { id: "pastel", label: "🌸 Hồng pastel", color: "#f7a8c6" },
+];
+
+function applyTheme(id) {
+  const theme = THEMES.find((t) => t.id === id) || THEMES[0];
+  document.documentElement.dataset.theme = theme.id;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme.color);
+  return theme;
+}
+
+(function initThemes() {
+  const select = document.getElementById("theme-select");
+  const current = applyTheme(localGet("theme", THEMES[0].id));
+  if (!select) return;
+  select.innerHTML = THEMES.map((t) => `<option value="${t.id}">${t.label}</option>`).join("");
+  select.value = current.id;
+  select.addEventListener("change", () => {
+    localSet("theme", applyTheme(select.value).id);
+  });
+})();
 
 function toast(message, err = false) {
   if (!message) return;
@@ -286,10 +313,28 @@ function fillCropOptions(crops, selected) {
 }
 
 function syncPrefsUi() {
-  $("run-crop").disabled = !$("bp").checked;
-  $("news-mode").disabled = !$("bn").checked;
+  const plant = $("bp").checked;
+  const news = $("bn").checked;
+  // Only the fields the chosen behaviours use are shown.
+  $("lbl-crop").hidden = !plant;
+  $("lbl-news-mode").hidden = !news;
   // Rest only happens once every shop on the paper was visited.
-  $("run-rest-min").disabled = !$("bn").checked;
+  $("lbl-rest").hidden = !news;
+  updatePrefsSummary();
+}
+
+// One line under the folded options: what the loop will use right now.
+function updatePrefsSummary() {
+  const p = currentPrefs();
+  const parts = [];
+  if (p.plant) parts.push(p.crop);
+  if (p.newspaper) {
+    const mode = $("news-mode").selectedOptions[0];
+    if (mode) parts.push(mode.textContent);
+  }
+  parts.push(`${p.limit}/vòng`);
+  if (p.newspaper && p.loop_rest_min !== undefined) parts.push(`nghỉ ${p.loop_rest_min} phút`);
+  $("prefs-summary").textContent = parts.join(" · ");
 }
 
 function fillRunPrefs(prefs) {
@@ -550,10 +595,14 @@ function render(state) {
     $("crops").innerHTML = state.crops.length
       ? state.crops.map(cropCard).join("")
       : `<p class="empty">Chưa có cây trồng.</p>`;
-    if (!prefsPending) fillCropOptions(state.crops, $("run-crop").value);
+    if (!prefsPending) {
+      fillCropOptions(state.crops, $("run-crop").value);
+      updatePrefsSummary();
+    }
   }
   if (state.run_prefs) fillRunPrefs(state.run_prefs);
   if (Array.isArray(state.wishlist_buys)) renderWishlistBuys(state.wishlist_buys);
+  if (state.buys_rev) knownBuysRev = state.buys_rev;
   if (state.wishlist) renderWishlist();
   if (state.library) {
     renderLibrary(state.library);
@@ -587,9 +636,16 @@ function schedulePoll(delay) {
   pollTimer = setTimeout(pollStatus, delay ?? pollDelay());
 }
 
+// What this page already holds. The server leaves the log and the purchase
+// history out of a poll while these still match: a quiet poll is ~1 KB and
+// reads no file, instead of ~20 KB and every item PNG each second.
+let knownLogSeq = "";
+let knownBuysRev = "";
+
 async function pollStatus() {
   try {
-    const status = await api("/api/status");
+    const query = `log=${encodeURIComponent(knownLogSeq)}&buys=${encodeURIComponent(knownBuysRev)}`;
+    const status = await api(`/api/status?${query}`);
     if (!serverOnline) {
       serverOnline = true;
       toast("Đã kết nối lại server web");
@@ -597,7 +653,8 @@ async function pollStatus() {
       await refresh().catch(() => {});
     }
     renderRun(status.run);
-    renderWishlistBuys(status.wishlist_buys);
+    if (Array.isArray(status.wishlist_buys)) renderWishlistBuys(status.wishlist_buys);
+    if (status.buys_rev) knownBuysRev = status.buys_rev;
   } catch (err) {
     if (serverOnline) {
       serverOnline = false;
@@ -609,7 +666,10 @@ async function pollStatus() {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) schedulePoll(0);
+  if (!document.hidden) {
+    loadFrameIfVisible();
+    schedulePoll(0);
+  }
 });
 
 // ---------------------------------------------------------------- run state
@@ -698,7 +758,7 @@ function renderRun(run) {
   }
 
   document.querySelectorAll("[data-run], [data-pan]").forEach((btn) => {
-    btn.disabled = busy;
+    btn.disabled = busy || (btn.id === "btn-shot" && !screenOn);
   });
   $("btn-start").disabled = busy;
   $("btn-stop").disabled = !busy || Boolean(run.stopping);
@@ -710,15 +770,20 @@ function renderRun(run) {
     note.push(`${r.action} ${r.ok ? "ok" : "fail"} ${r.target || ""} ${r.error || ""}`.trim());
   }
   if (run.last_error) note.push(run.last_error);
-  $("run-note").textContent = note.join(" · ");
+  const noteText = note.join(" · ");
+  $("run-note").textContent = noteText;
+  // The row only has room for two lines; the tooltip carries the full text.
+  $("run-note").title = noteText;
 
-  renderLog(run.logs);
+  // A poll leaves the log out when it has not moved since the last one.
+  if (Array.isArray(run.logs)) {
+    renderLog(run.logs);
+    knownLogSeq = String(run.log_seq ?? "");
+  }
   renderTiming(run.timing);
-  if (run.has_frame && run.frame_seq !== lastFrameSeq) {
-    lastFrameSeq = run.frame_seq;
-    $("live-frame").src = `/api/frame.png?seq=${run.frame_seq ?? Date.now()}`;
-    $("live-link").hidden = false;
-    $("live-empty").hidden = true;
+  if (run.has_frame) {
+    pendingFrameSeq = run.frame_seq ?? Date.now();
+    loadFrameIfVisible();
   }
   renderRunStatus();
   renderFrameAge();
@@ -779,7 +844,7 @@ function renderRunStatus() {
 function renderFrameAge() {
   const run = lastRun;
   const el = $("frame-age");
-  if (!run || !run.frame_at) {
+  if (!screenOn || !run || !run.frame_at) {
     el.textContent = "";
     return;
   }
@@ -796,6 +861,45 @@ function logClass(line) {
   if (/\bFAIL\b|error|lỗi|Traceback/i.test(line)) return "log-fail";
   if (/\b(ok|done)\b/.test(line)) return "log-ok";
   return "";
+}
+
+// The screen panel shows a ~110 KB JPEG (the link opens the full PNG). It is
+// fetched only while the panel is on screen: on Wishlist or Config, or in a
+// hidden tab, new frames are skipped and the newest one loads on return.
+let pendingFrameSeq = null;
+// The "Màn hình" switch: while off, no new frame is fetched (the bot itself
+// keeps taking screenshots) and the newest one loads when it is switched on.
+let screenOn = localGet("screenOn", true);
+
+function applyScreenOn() {
+  $("live-panel").classList.toggle("screen-off", !screenOn);
+  // Off keeps the frame on screen but shows a placeholder instead of the picture.
+  const empty = $("live-empty");
+  if (!empty.dataset.idleText) empty.dataset.idleText = empty.textContent;
+  const hasPicture = Boolean($("live-frame").getAttribute("src"));
+  $("live-link").hidden = !screenOn || !hasPicture;
+  empty.hidden = screenOn && hasPicture;
+  empty.textContent = screenOn ? empty.dataset.idleText : "Màn hình đang tắt — bấm nút Màn hình để bật lại";
+  const toggle = $("btn-screen-toggle");
+  toggle.setAttribute("aria-pressed", String(screenOn));
+  toggle.setAttribute("aria-label", screenOn ? "Màn hình: Bật" : "Màn hình: Tắt");
+  toggle.title = screenOn
+    ? "Màn hình đang bật. Bấm để ngừng tải ảnh mới về trình duyệt"
+    : "Màn hình đang tắt. Bấm để bật và tải ảnh mới nhất";
+  const shot = $("btn-shot");
+  shot.title = screenOn ? "Chụp màn hình máy" : "Bật màn hình để xem ảnh chụp";
+  shot.disabled = !screenOn || Boolean(lastRun && lastRun.status === "running");
+  if (screenOn) loadFrameIfVisible();
+  renderFrameAge();
+}
+
+function loadFrameIfVisible() {
+  if (pendingFrameSeq === null || pendingFrameSeq === lastFrameSeq) return;
+  if (!screenOn || !LIVE_PAGES.has(currentPage) || document.hidden) return;
+  lastFrameSeq = pendingFrameSeq;
+  $("live-frame").src = `/api/frame.jpg?seq=${encodeURIComponent(lastFrameSeq)}`;
+  $("live-link").hidden = false;
+  $("live-empty").hidden = true;
 }
 
 function renderLog(lines) {
@@ -1076,6 +1180,43 @@ function renderTiming(timing) {
         .join(" · ")}`
     : "";
 }
+
+$("btn-screen-toggle").addEventListener("click", () => {
+  screenOn = !screenOn;
+  localSet("screenOn", screenOn);
+  applyScreenOn();
+});
+applyScreenOn();
+
+$("log-details").open = Boolean(localGet("logOpen", true));
+$("log-details").addEventListener("toggle", (ev) => {
+  localSet("logOpen", ev.target.open);
+  if (ev.target.open) $("run-log").scrollTop = $("run-log").scrollHeight;
+});
+function applyLogTall(tall) {
+  $("run-log").classList.toggle("tall", tall);
+  const btn = $("btn-log-expand");
+  btn.textContent = tall ? "⤡ Thu nhỏ" : "⤢ Mở rộng";
+  btn.setAttribute("aria-pressed", String(tall));
+  $("run-log").scrollTop = $("run-log").scrollHeight;
+}
+$("btn-log-expand").addEventListener("click", (ev) => {
+  // The button lives in the <summary>: do not let the click fold the log.
+  ev.preventDefault();
+  ev.stopPropagation();
+  const tall = !$("run-log").classList.contains("tall");
+  localSet("logTall", tall);
+  applyLogTall(tall);
+  $("log-details").open = true;
+});
+applyLogTall(Boolean(localGet("logTall", false)));
+
+$("prefs-details").open = Boolean(localGet("prefsOpen", false));
+$("prefs-details").addEventListener("toggle", (ev) => localSet("prefsOpen", ev.target.open));
+$("buy-details").open = Boolean(localGet("buyOpen", true));
+$("buy-details").addEventListener("toggle", (ev) => localSet("buyOpen", ev.target.open));
+$("once-details").open = Boolean(localGet("onceOpen", false));
+$("once-details").addEventListener("toggle", (ev) => localSet("onceOpen", ev.target.open));
 
 $("timing-details").open = Boolean(localGet("timingOpen", false));
 $("timing-details").addEventListener("toggle", (ev) => localSet("timingOpen", ev.target.open));

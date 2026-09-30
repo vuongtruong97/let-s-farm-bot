@@ -13,7 +13,7 @@ from app.actions.shop import NewspaperActions
 from app.config import game_package, load_config
 from app.controller.camera import CameraManager
 from app.controller.adb import DeviceError
-from app.controller.device import DeviceController, frame_png_bytes
+from app.controller.device import DeviceController, frame_jpeg_bytes, frame_png_bytes
 from app.storage.logger import ActionFormatter, get_logger
 from app.vision.screen import ScreenDetector
 
@@ -107,9 +107,11 @@ class BotRuntime:
         self.phase: str | None = None
         self.rest_until: float | None = None
         self.rest_s: float | None = None
-        # Whatever device.screenshot() returned; PNG bytes are made on demand.
+        # Whatever device.screenshot() returned; PNG/JPEG bytes are made on
+        # demand, once per frame however many pages ask.
         self.last_frame = None
         self._frame_png: bytes | None = None
+        self._frame_jpeg: bytes | None = None
         # Bumped per screenshot so the page refetches the frame only when new.
         self.frame_seq = 0
         self.frame_at: float | None = None
@@ -119,9 +121,17 @@ class BotRuntime:
         self._log_handler: logging.Handler | None = None
         self._attach_logs()
 
-    def snapshot(self) -> dict:
+    @property
+    def log_seq(self) -> int:
+        """Log lines written so far; the page asks for logs only when it moved."""
+        handler = self._log_handler
+        return getattr(handler, "seq", 0)
+
+    def snapshot(self, known_log_seq: str | None = None) -> dict:
+        """Run state for the page. The log lines come along unless the caller
+        already holds them (known_log_seq equals the current log_seq)."""
         with self.lock:
-            return {
+            snap = {
                 "status": self.status,
                 "job": self.job,
                 "stopping": self.status == "running" and self.stop_event.is_set(),
@@ -140,9 +150,12 @@ class BotRuntime:
                 "rest_until": self.rest_until,
                 "rest_s": self.rest_s,
                 "now": time.time(),
-                "logs": list(self.logs),
+                "log_seq": self.log_seq,
                 "timing": self._timing_snap(),
             }
+            if known_log_seq != str(snap["log_seq"]):
+                snap["logs"] = list(self.logs)
+            return snap
 
     def _timing_snap(self) -> dict | None:
         """Per-step wall clock of the newspaper shop loop, for the live table."""
@@ -152,13 +165,25 @@ class BotRuntime:
         return timing.snapshot()
 
     def frame_png(self) -> bytes | None:
+        """Full-size PNG of the last screenshot (the "open original" link)."""
+        return self._encoded_frame("_frame_png", frame_png_bytes)
+
+    def frame_jpeg(self) -> bytes | None:
+        """Small JPEG of the last screenshot, what the live panel shows."""
+        return self._encoded_frame("_frame_jpeg", frame_jpeg_bytes)
+
+    def _encoded_frame(self, slot: str, encode) -> bytes | None:
+        # Encode outside the lock: the bot's screenshot hook takes that lock,
+        # and a 1920x1080 PNG costs ~120 ms the bot would sit waiting.
         with self.lock:
-            frame = self.last_frame
-            if frame is None or isinstance(frame, (bytes, bytearray)):
-                return frame
-            if self._frame_png is None:
-                self._frame_png = frame_png_bytes(frame)
-            return self._frame_png
+            frame, cached = self.last_frame, getattr(self, slot)
+        if frame is None or cached is not None:
+            return cached if frame is not None else None
+        data = encode(frame)
+        with self.lock:
+            if self.last_frame is frame:
+                setattr(self, slot, data)
+        return data
 
     def start(self, action: str, payload: dict | None = None) -> dict:
         job = (action or "").strip().lower()
@@ -350,6 +375,7 @@ class BotRuntime:
             with self.lock:
                 self.last_frame = png
                 self._frame_png = None
+                self._frame_jpeg = None
                 self.frame_seq += 1
                 self.frame_at = time.time()
             return png
@@ -631,6 +657,8 @@ class _DequeHandler(logging.Handler):
         super().__init__()
         self.lines = lines
         self._lock = lock
+        # Lines written so far; the page skips the log when this has not moved.
+        self.seq = 0
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -639,6 +667,7 @@ class _DequeHandler(logging.Handler):
             return
         with self._lock:
             self.lines.append(msg)
+            self.seq += 1
 
 
 def _limit(payload: dict) -> int:

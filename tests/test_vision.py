@@ -113,6 +113,46 @@ def test_fast_detect_keeps_popup_close_targets(detector: ScreenDetector):
     assert [obj for obj in result.objects if obj.type == "popup" and obj.state == "close"]
 
 
+@pytest.mark.parametrize(
+    "fixture",
+    [FARM, POPUP, SILO, NEWSPAPER, PLAYER_SHOP, UNKNOWN, FIXTURES / "stall_fits.jpg"],
+)
+@pytest.mark.parametrize("name", ["popup_close", "newspaper_ad"])
+def test_coarse_match_finds_what_the_full_sweep_finds(detector, fixture, name):
+    """The half-size pass only proposes spots; the answer is still scored at
+    full size, so it must agree with sweeping the whole frame. The popup X
+    most of all: it is what keeps the bot off diamond prompts."""
+    from app.vision.screen import SCREEN_MATCH_THRESHOLD, SCREEN_SCALES
+
+    image = as_bgr(fixture)
+    kwargs = {"threshold": SCREEN_MATCH_THRESHOLD, "scales": SCREEN_SCALES.get(name)}
+    full = detector.matcher.match_one(image, name, **kwargs)
+    fast = detector.matcher.match_one(image, name, coarse=0.5, **kwargs)
+    assert (full is None) == (fast is None)
+    if full is not None and name == "popup_close":
+        assert abs(full.x - fast.x) <= 2 and abs(full.y - fast.y) <= 2
+        assert abs(full.confidence - fast.confidence) < 0.02
+
+
+def test_farm_frame_classifies_fast(detector: ScreenDetector, monkeypatch):
+    """A farm or loading frame used to sweep the popup X at five sizes over
+    the whole frame in colour, ~2 s a frame inside every poll loop."""
+    import time
+
+    from app.vision import screen
+
+    image = as_bgr(FARM)
+    detector.detect(image)
+    started = time.perf_counter()
+    assert detector.detect(image).screen is GameScreen.FARM
+    fast = time.perf_counter() - started
+    monkeypatch.setattr(screen, "SCREEN_COARSE", None)
+    started = time.perf_counter()
+    assert detector.detect(image).screen is GameScreen.FARM
+    full = time.perf_counter() - started
+    assert fast * 3 < full
+
+
 def test_single_hud_button_is_unknown(detector: ScreenDetector):
     image = as_bgr(FARM)
     corner = image[0:180, 0:180]

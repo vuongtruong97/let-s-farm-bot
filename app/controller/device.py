@@ -244,6 +244,28 @@ def frame_png_bytes(frame) -> bytes:
     return buf.tobytes()
 
 
+# The web preview is at most ~800 px wide even on a 2x screen: a 960 px JPEG
+# is ~110 KB and encodes in ~4 ms, against 2.3 MB and ~120 ms for the PNG.
+PREVIEW_WIDTH = 960
+PREVIEW_JPEG_QUALITY = 80
+
+
+def frame_jpeg_bytes(frame, width: int = PREVIEW_WIDTH) -> bytes:
+    """Small JPEG of a frame from screenshot(), for showing it on a page."""
+    image = cv2.imdecode(np.frombuffer(frame, np.uint8), cv2.IMREAD_COLOR) if isinstance(
+        frame, (bytes, bytearray)
+    ) else frame
+    if image is None:
+        raise DeviceError("Không decode được ảnh màn hình")
+    h, w = image.shape[:2]
+    if w > width:
+        image = cv2.resize(image, (width, round(h * width / w)), interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, PREVIEW_JPEG_QUALITY])
+    if not ok:
+        raise DeviceError("Không encode được JPEG")
+    return buf.tobytes()
+
+
 def _raw_to_bgr(raw: bytes) -> np.ndarray:
     if len(raw) < RAW_HEADER_SIZES[0]:
         raise DeviceError("raw screencap quá ngắn")

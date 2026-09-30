@@ -298,6 +298,10 @@ def test_read_crate_qty_popcorn_is_7():
         ("stall_fits.jpg", (760, 421), 3),
         ("stall_fits.jpg", (493, 675), 8),
         ("stall_fits.jpg", (493, 421), 9),
+        # Cut from a live stall. This font's 6 leaves its top-left open like
+        # a 4 does; only its low loop tells them apart.
+        ("crate_x6.png", (40, 50), 6),
+        ("crate_x8.png", (40, 50), 8),
     ],
 )
 def test_read_qty_big_x_on_live_stalls(fixture, mark, qty):
@@ -315,6 +319,8 @@ def test_read_qty_big_x_on_live_stalls(fixture, mark, qty):
         # A 4's loop is closed like a 0's; only where the hole sits tells them apart.
         ("crate_shovel_x4.png", "item_xeng", 4),
         ("crate_platinum_x5.png", "item_thanh_bach_kim", 5),
+        # The 4's small loop closes up in the white mask on this crate.
+        ("crate_landdeed_x4.png", "item_so_do", 4),
     ],
 )
 def test_read_crate_qty_on_buy_proofs(fixture, template, qty):
@@ -617,6 +623,40 @@ def test_buy_coin_slot_and_verify(tmp_path, no_sleep, monkeypatch):
 
     assert buy_proof_png("buy_01").is_file()
     assert "qty" not in rows[0]
+
+
+def test_buy_wishlist_counts_a_crate_once_while_it_greys(tmp_path, no_sleep, monkeypatch):
+    """A bought crate loses its price tag at once but greys a moment later,
+    and the stall may still creep a few px: that crate is not a new one."""
+    monkeypatch.setattr(
+        "app.actions.shop.active_wishlist",
+        lambda: {"wheat": {"template": "item_wheat", "enabled": True}},
+    )
+    icon = _item_icon()
+    gray = cv2.cvtColor(cv2.cvtColor(icon, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+    before = _bgr(PLAYER_SHOP)
+    before[360:404, 640:684] = icon
+    # Only the frame before the tap shows the price tag.
+    before[0:4, 0:4] = (1, 2, 3)
+    monkeypatch.setattr(
+        "app.vision.newspaper._price_near",
+        lambda image, *_args: bool((image[0:4, 0:4] == (1, 2, 3)).all()),
+    )
+    tag_gone = _bgr(PLAYER_SHOP)
+    tag_gone[360:404, 635:679] = icon
+    greyed = _bgr(PLAYER_SHOP)
+    greyed[360:404, 635:679] = gray
+    matcher = TemplateMatcher(templates_dir=_tpl_dir(tmp_path, {"item_wheat": icon}), scales=(1.0,))
+    device = FakeDevice([_png_bytes(before), _png_bytes(tag_gone), _png_bytes(greyed)])
+    actions = NewspaperActions(
+        device, AppConfig(debug=False), matcher=matcher, wait_s=0, visit_wait_s=0
+    )
+    _skip_rewind(actions, monkeypatch)
+    assert actions.buy_wishlist().success
+    assert len(device.taps) == 1
+    from app.storage.botdata import list_purchases
+
+    assert [row["kind"] for row in list_purchases()] == ["buy", "match"]
 
 
 def test_stall_match_records_wishlist_when_buy_verify_fails(tmp_path, no_sleep, monkeypatch):

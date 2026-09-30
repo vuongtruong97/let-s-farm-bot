@@ -130,6 +130,22 @@ def list_purchases(limit: int = 80) -> list[dict]:
     return load_purchases()[:cap]
 
 
+def buys_revision() -> str:
+    """Changes whenever wishlist_buy_status() could: a stat of its two files.
+
+    The page polls every second; this lets it skip re-reading purchases.json
+    and every item PNG when nothing was bought or edited.
+    """
+    stamps = []
+    for path in (purchases_path(), wishlist_path()):
+        try:
+            stat = path.stat()
+            stamps.append(f"{stat.st_mtime_ns:x}.{stat.st_size:x}")
+        except OSError:
+            stamps.append("-")
+    return "-".join(stamps)
+
+
 def wishlist_buy_status() -> list[dict]:
     """Every wishlist item with stall-match and verified-buy history.
 

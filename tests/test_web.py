@@ -255,6 +255,47 @@ def test_share_api_lists_lan_urls_when_bound_to_all(monkeypatch, data_home: Path
     assert info["urls"] == [f"http://192.168.1.20:{port}"]
 
 
+def test_theme_stylesheet_and_selector_are_served(httpd: str):
+    code, css = _request(f"{httpd}/static/themes.css")
+    assert code == 200
+    assert b"data-theme='pastel'" in css
+    code, page = _request(f"{httpd}/")
+    assert code == 200
+    assert b'id="theme-select"' in page
+    assert b"/static/themes.css" in page
+
+
+def test_screen_toggle_and_log_controls_are_on_the_page(httpd: str):
+    code, page = _request(f"{httpd}/")
+    assert code == 200
+    for marker in (b'id="btn-screen-toggle"', b'id="btn-log-expand"', b'id="log-details"'):
+        assert marker in page
+    # The shot button sits in its own row below the picture, not inside it.
+    assert page.index(b'id="viewport"') < page.index(b'class="viewport-actions"') < page.index(b'id="btn-shot"')
+
+
+def test_control_page_folds_options_and_one_off_actions(httpd: str):
+    code, page = _request(f"{httpd}/")
+    assert code == 200
+    for marker in (b'id="prefs-details"', b'id="once-details"', b'id="prefs-summary"'):
+        assert marker in page
+    # Everyday controls stay outside the folds; one-off actions live inside.
+    once = page.index(b'id="once-details"')
+    assert page.index(b'id="btn-start"') < page.index(b'id="prefs-details"') < once
+    assert page.index(b'id="btn-stop"') < page.index(b'id="prefs-details"')
+    assert page.index(b'data-run="restart_game"') > once
+    assert b'data-confirm="' in page[once:]
+
+
+def test_buy_history_is_a_foldable_section(httpd: str):
+    code, page = _request(f"{httpd}/")
+    assert code == 200
+    fold = page.index(b'id="buy-details"')
+    # The one-line summary sits in the <summary>, so it shows while folded.
+    assert fold < page.index(b'id="buy-summary"') < page.index(b"</summary>", fold)
+    assert page.index(b"</summary>", fold) < page.index(b'id="btn-buy-reset"') < page.index(b'id="buy-log"')
+
+
 def _request(url: str, method: str = "GET", payload: dict | None = None) -> tuple[int, dict | bytes]:
     data = None
     headers = {}
@@ -649,6 +690,10 @@ def test_web_run_screenshot_and_unknown(httpd: str, data_home: Path, monkeypatch
     code, png = _request(f"{httpd}/api/frame.png")
     assert code == 200
     assert isinstance(png, bytes) and png[:8] == b"\x89PNG\r\n\x1a\n"
+    # The live panel shows a small JPEG of the same frame.
+    code, jpg = _request(f"{httpd}/api/frame.jpg")
+    assert code == 200
+    assert isinstance(jpg, bytes) and jpg[:3] == b"\xff\xd8\xff"
     code, err = _request(f"{httpd}/api/run", "POST", {"action": "explode"})
     assert code == 400
     code, err = _request(
@@ -1122,10 +1167,58 @@ def test_buy_status_keeps_disabled_items(data_home: Path):
 def test_status_endpoint_is_light(httpd: str, data_home: Path):
     code, body = _request(f"{httpd}/api/status")
     assert code == 200
-    assert set(body) == {"run", "wishlist_buys"}
+    assert set(body) == {"run", "wishlist_buys", "buys_rev"}
     run = body["run"]
-    for key in ("started_at", "rounds", "phase", "rest_until", "frame_seq", "now"):
+    for key in ("started_at", "rounds", "phase", "rest_until", "frame_seq", "now", "logs", "log_seq"):
         assert key in run
+
+
+def test_status_skips_what_the_page_already_has(httpd: str, data_home: Path, monkeypatch):
+    """Polled every second: with the log_seq and buys_rev it already holds,
+    the page gets neither the log nor the purchase history again (and the
+    server reads no purchase file or item PNG for it)."""
+    first = _request(f"{httpd}/api/status")[1]
+    log_seq, rev = first["run"]["log_seq"], first["buys_rev"]
+    # A nested context: undoing it must not undo data_home's redirect of the
+    # data directory, or the buy below lands in the real purchases.json.
+    with monkeypatch.context() as patched:
+        patched.setattr(
+            "app.web.server.botdata.wishlist_buy_status",
+            lambda: (_ for _ in ()).throw(AssertionError("history re-read")),
+        )
+        code, quiet = _request(f"{httpd}/api/status?log={log_seq}&buys={rev}")
+    assert code == 200
+    assert "wishlist_buys" not in quiet
+    assert "logs" not in quiet["run"]
+    assert quiet["buys_rev"] == rev
+    assert botdata.purchases_path().parent == data_home
+
+    # A buy moves buys_rev, so the history comes back.
+    botdata.record_purchase("wheat", kind="buy")
+    code, moved = _request(f"{httpd}/api/status?log={log_seq}&buys={rev}")
+    assert moved["buys_rev"] != rev
+    assert any(row["id"] == "wheat" and row["buy_count"] == 1 for row in moved["wishlist_buys"])
+
+
+def test_status_sends_the_log_when_it_moved(data_home: Path):
+    import logging
+
+    rt = _runtime()
+    seq = str(rt.log_seq)
+    assert "logs" not in rt.snapshot(known_log_seq=seq)
+    rt._log_handler.emit(
+        logging.LogRecord("farmbot", logging.INFO, __file__, 1, "one more line", None, None)
+    )
+    snap = rt.snapshot(known_log_seq=seq)
+    assert snap["logs"][-1].endswith("one more line")
+    assert str(snap["log_seq"]) != seq
+
+
+def test_rotated_logs_are_not_tracked():
+    """bot.log.1/.2/.3 matched no ignore rule and ~145k log lines landed in a
+    commit."""
+    text = (Path(__file__).resolve().parent.parent / ".gitignore").read_text(encoding="utf-8")
+    assert "logs/*.log.*" in text
 
 
 def test_snapshot_tracks_rounds_frames_and_run_time(data_home: Path):

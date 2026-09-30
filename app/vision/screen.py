@@ -7,6 +7,7 @@ import numpy as np
 
 from app.storage.logger import get_logger
 from app.vision.detector import DetectedObject, UiDetector, match_to_object
+from app.vision.regions import UI_REGIONS
 from app.vision.template_matcher import TemplateMatcher, as_bgr
 
 log = get_logger("VISION")
@@ -21,6 +22,10 @@ SCREEN_PREFIXES = ("hud_", "popup_", "shop_", "newspaper_")
 # keeps the sweep.
 SCREEN_SCALES = {"popup_close": (1.0, 0.85, 0.92, 1.08, 1.15)}
 SKIP_SCREEN_PREFIXES = ("item_", "seed_", "price_", "newspaper_stand")
+# Templates without a UI region (the newspaper ad, the popup X) sweep the whole
+# frame; at full size in colour that cost ~2s on every farm or loading frame.
+# They search a half-size copy first and score the spots at full size.
+SCREEN_COARSE = 0.5
 
 
 class GameScreen(str, Enum):
@@ -152,6 +157,7 @@ class ScreenDetector:
             name,
             threshold=SCREEN_MATCH_THRESHOLD,
             scales=SCREEN_SCALES.get(name),
+            coarse=None if name in UI_REGIONS else SCREEN_COARSE,
         )
 
 

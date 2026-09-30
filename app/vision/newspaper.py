@@ -485,9 +485,10 @@ def _qty_hole_cy(bin_img: np.ndarray) -> float:
 def _classify_qty_digit(bin_img: np.ndarray) -> str | None:
     """One stack-size digit from its white fill.
 
-    Each threshold sits between the values measured on real crates (both mark
-    styles; noted per rule). 6 has not been seen on a crate yet, so its rule
-    is the font's shape, not a measurement.
+    Each threshold sits between the values measured on real crates, every
+    digit 0-9 in both mark styles (noted per rule). In this font both 4 and 6
+    leave the top-left corner open, and a 4's small loop can close up in the
+    white mask (land deed crates), so no single cue names a 4.
     """
     h, w = bin_img.shape[:2]
     ink = bin_img > 0
@@ -502,24 +503,29 @@ def _classify_qty_digit(bin_img: np.ndarray) -> str | None:
     if holes >= 2:
         return "8"
     if holes == 1:
-        # Only 0's hole sits in the middle cell (0.23-0.25 ink there); the
+        # Only 0's hole sits in the middle cell (0.21-0.25 ink there); the
         # others' holes are small and high or low, so it reads full (4: 0.87,
-        # 9: 0.77). Hole height alone can not split 0 (0.50) from 4 (0.46).
+        # 6: 0.89, 9: 0.77). Hole height alone can not split 0 (0.50) from 4
+        # (0.46).
         if zone(1, 1) < 0.5:
             return "0"
+        if _qty_hole_cy(bin_img) > 0.56:  # 6: 0.64; 4: 0.46; 9: 0.35
+            return "6"
         # 4's diagonal leaves its top-left corner open (0.16); 9's bowl fills
         # it (0.59).
         if zone(0, 0) < 0.35:
             return "4"
-        if _qty_hole_cy(bin_img) < 0.5:  # 9: 0.35
-            return "9"
-        return "6"
+        return "9"
     if h / max(w, 1) >= 1.65:  # 1: 1.81-1.88; every other digit <= 1.48
         return "1"
+    # A 4 whose loop closed: open top-left (0.16-0.21, every other loopless
+    # digit >= 0.42) over a thin bottom-left (0.39-0.40; a 6's bowl is 0.73).
+    if zone(0, 0) < 0.3 and zone(2, 0) < 0.55:
+        return "4"
     if zone(2, 0) < 0.4 and zone(2, 2) < 0.4:  # 7 ends in one centre stroke
         return "7"
     mid_left = zone(1, 0)
-    if mid_left >= 0.45:  # 5: 0.57 (its upright)
+    if mid_left >= 0.45:  # 5: 0.54-0.57 (its upright)
         return "5"
     if mid_left < 0.17:  # 3: 0.07-0.09
         return "3"

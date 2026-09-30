@@ -75,6 +75,10 @@ python -m app.main web
 
 Mở http://127.0.0.1:48721 để **điều khiển bot** (thu hoạch / trồng / mua báo, chụp màn hình, pan camera), **test shop đang mở** (nhận diện & mua, hoặc crop icon vào wishlist), crop icon wishlist, chỉnh cây trồng và ADB. Diamond luôn khoá. Dừng web rồi mở lại nếu đang chạy phiên cũ.
 
+**Phong cách giao diện:** chọn 🌾 Nông trại hoặc 🌸 Hồng pastel ở đầu trang, lựa chọn được nhớ theo từng thiết bị. Thêm phong cách mới bằng một khối `html[data-theme="..."]` trong `app/web/static/themes.css` và một dòng trong `THEMES` ở `app.js`.
+
+**Màn hình máy và nhật ký:** nút tròn con mắt (bật/tắt màn hình) dưới ảnh live, cạnh nút tròn chụp ảnh (máy ảnh), dừng việc tải ảnh mới về trình duyệt (khung màn hình vẫn hiện, chỉ thay ảnh bằng dòng báo tắt; bot vẫn tự chụp ảnh để chạy); bật lại sẽ tải ngay ảnh mới nhất. Khung **Nhật ký** thu gọn được và có nút Mở rộng/Thu nhỏ; cả hai lựa chọn được nhớ theo từng thiết bị.
+
 **Xem trên điện thoại:** bấm nút **📱 Chia sẻ** trên đầu trang để lấy link LAN và mã QR (điện thoại phải cùng Wi-Fi). Web không có mật khẩu, ai trong cùng mạng mở link đều điều khiển được bot, nên chỉ dùng ở mạng tin cậy. Nếu điện thoại không vào được, cho phép Python qua Windows Firewall (mạng Private). Mã QR dùng thư viện `qrcode-generator` (MIT) đặt sẵn tại `app/web/static/qrcode.js`.
 
 Tuỳ chọn vòng lặp (hành vi, cây, limit, phút nghỉ) tự lưu vào `data/run_prefs.json`, nên tải lại trang hay mở từ điện thoại vẫn giữ nguyên. Khi đang nghỉ giữa vòng có nút **Chạy vòng mới ngay**.
