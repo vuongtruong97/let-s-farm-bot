@@ -364,7 +364,7 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     assert b"stall_swipe_ms" in page
     assert b"timing-log" in page
     assert b"timing-safety" in page
-    assert "Thời gian vòng shop".encode("utf-8") in page
+    assert "Đo lường".encode("utf-8") in page
     assert b"viewport-fit=cover" in page
     code, css = _request(f"{httpd}/static/style.css")
     assert code == 200
@@ -1319,3 +1319,50 @@ def test_game_skin_pieces_are_wired(httpd: str):
         assert b"/static/baloo2-" + subset + b".woff2" in css
     _code, js = _request(f"{httpd}/static/app.js")
     assert b".modal-x" in js
+
+
+def _put_config(httpd: str, **fields) -> dict:
+    code, body = _request(f"{httpd}/api/config", "PUT", {"adb_host": "127.0.0.1", **fields})
+    assert code == 200, body
+    return body["config"]
+
+
+def test_telegram_token_never_leaves_the_server(httpd: str, data_home: Path):
+    from app.config import load_config
+
+    saved = _put_config(httpd, telegram_token="123456:SECRETabcd", telegram_chat_id="42")
+    assert saved["telegram_token_set"] is True
+    assert saved["telegram_token_hint"] == "abcd"
+    assert "telegram_token" not in saved
+    code, state = _request(f"{httpd}/api/state")
+    assert "SECRET" not in json.dumps(state)
+    assert state["config"]["telegram_chat_id"] == "42"
+
+    # Saving the form again (token field blank, as the page sends it) keeps it.
+    _put_config(httpd, telegram_chat_id="42", debug=True)
+    assert load_config().telegram_token == "123456:SECRETabcd"
+
+    cleared = _put_config(httpd, telegram_token_clear=True)
+    assert cleared["telegram_token_set"] is False
+    assert load_config().telegram_token == ""
+
+
+def test_telegram_buttons_explain_missing_setup(httpd: str, data_home: Path):
+    code, body = _request(f"{httpd}/api/telegram/test", "POST", {})
+    assert code == 400
+    assert "token" in body["error"]
+    code, body = _request(f"{httpd}/api/telegram/chat", "POST", {})
+    assert code == 400
+    assert "token" in body["error"]
+
+
+def test_telegram_chat_id_is_found_and_saved(httpd: str, data_home: Path, monkeypatch):
+    from app.config import load_config
+
+    _put_config(httpd, telegram_token="123456:SECRETabcd")
+    monkeypatch.setattr("app.web.server.detect_chat_id", lambda token: "777")
+    code, body = _request(f"{httpd}/api/telegram/chat", "POST", {})
+    assert code == 200
+    assert body["chat_id"] == "777"
+    assert load_config().telegram_chat_id == "777"
+    assert load_config().telegram_token == "123456:SECRETabcd"

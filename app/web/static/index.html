@@ -31,7 +31,7 @@
       <div>
         <p class="eyebrow">Let's Farm Bot</p>
         <h1 id="page-title">Điều khiển bot</h1>
-        <p id="page-lede" class="lede">Chọn hành vi rồi Bắt đầu. Diamond luôn khoá.</p>
+        <p id="page-lede" class="lede">Chọn hành động rồi Bắt đầu.</p>
       </div>
       <div class="top-status">
         <span id="device-pill" class="pill">Chưa kết nối</span>
@@ -72,7 +72,7 @@
 
         <details id="timing-details" class="fold">
           <summary>
-            <span class="buy-heading">Thời gian vòng shop</span>
+            <span class="buy-heading">Đo lường</span>
             <span id="timing-head" class="muted timing-head"></span>
           </summary>
           <div id="timing-panel" hidden>
@@ -406,6 +406,27 @@
               >Swipe (ms)
               <input id="swipe_duration_ms" name="swipe_duration_ms" type="number" min="50" max="3000" />
             </label>
+          </fieldset>
+          <fieldset class="telegram-fieldset">
+            <legend>Thông báo Telegram</legend>
+            <p class="muted telegram-help">
+              Báo về điện thoại mỗi lần bot mua được hàng, kèm ảnh thùng. <b>1.</b> Trên Telegram, chat với <b>@BotFather</b>, gõ <code>/newbot</code> và làm theo để nhận token.
+              <b>2.</b> Dán token vào đây. <b>3.</b> Mở bot vừa tạo, bấm <b>Start</b>. <b>4.</b> Bấm <b>Lấy chat ID</b> rồi <b>Gửi thử</b>.
+            </p>
+            <label
+              >Token bot
+              <input id="telegram_token" name="telegram_token" type="password" autocomplete="off" spellcheck="false" placeholder="123456789:AAF…" />
+            </label>
+            <label
+              >Chat ID
+              <input id="telegram_chat_id" name="telegram_chat_id" autocomplete="off" placeholder="Bấm Lấy chat ID" />
+            </label>
+            <label class="check"> <input id="telegram_buys" name="telegram_buys" type="checkbox" /> Báo khi mua được hàng </label>
+            <div class="row">
+              <button id="btn-telegram-chat" class="btn btn-compact" type="button">Lấy chat ID</button>
+              <button id="btn-telegram-test" class="btn btn-compact primary" type="button">Gửi thử</button>
+              <button id="btn-telegram-clear" class="btn btn-compact danger" type="button" hidden>Xoá token</button>
+            </div>
           </fieldset>
           <fieldset>
             <legend>Khác</legend>

@@ -2,88 +2,98 @@ const $ = (id) => document.getElementById(id);
 
 const PAGE_META = {
   control: {
-    title: "Điều khiển bot",
-    lede: "Chọn hành vi rồi Bắt đầu. Diamond luôn khoá.",
+    title: 'Điều khiển bot',
+    lede: 'Chọn hành động rồi Bắt đầu',
   },
   wishlist: {
-    title: "Wishlist",
-    lede: "Hai crop mỗi item: shop có màu, báo màu in. Bấm vào item để sửa hoặc xoá.",
+    title: 'Wishlist',
+    lede: 'Hai crop mỗi item: shop có màu, báo màu in. Bấm vào item để sửa hoặc xoá.',
   },
   library: {
-    title: "Thư viện",
-    lede: "Icon chụp từ shop/báo. Gán vào vật phẩm khi tạo hoặc sửa.",
+    title: 'Thư viện',
+    lede: 'Icon chụp từ shop/báo. Gán vào vật phẩm khi tạo hoặc sửa.',
   },
   crops: {
-    title: "Cây trồng",
-    lede: "Hạt trên khay khi trồng. Wheat mặc định dùng seed_wheat.png.",
+    title: 'Cây trồng',
+    lede: 'Hạt trên khay khi trồng. Wheat mặc định dùng seed_wheat.png.',
   },
   templates: {
-    title: "Template hệ thống",
-    lede: "HUD, cột báo, shop — chỉ xem. Không xoá từ web.",
+    title: 'Template hệ thống',
+    lede: 'HUD, cột báo, shop — chỉ xem. Không xoá từ web.',
   },
   config: {
-    title: "Cấu hình",
-    lede: "Lưu vào data/config.json. Không bao giờ cho phép tiêu diamond.",
+    title: 'Cấu hình',
+    lede: 'Lưu vào data/config.json. Không bao giờ cho phép tiêu diamond.',
   },
   develop: {
-    title: "Phát triển bot",
-    lede: "Từng bước mua hàng trên báo, chụp màn, nhận diện, camera. Overlay debug nằm trong Cấu hình.",
+    title: 'Phát triển bot',
+    lede: 'Từng bước mua hàng trên báo, chụp màn, nhận diện, camera. Overlay debug nằm trong Cấu hình.',
   },
 };
-const LIVE_PAGES = new Set(["control", "develop"]);
+const LIVE_PAGES = new Set(['control', 'develop']);
 const PATH_TO_PAGE = {
-  "/": "control",
-  "/control": "control",
-  "/index.html": "control",
-  "/wishlist": "wishlist",
-  "/library": "library",
-  "/crops": "crops",
-  "/templates": "templates",
-  "/config": "config",
-  "/dev": "develop",
-  "/develop": "develop",
+  '/': 'control',
+  '/control': 'control',
+  '/index.html': 'control',
+  '/wishlist': 'wishlist',
+  '/library': 'library',
+  '/crops': 'crops',
+  '/templates': 'templates',
+  '/config': 'config',
+  '/dev': 'develop',
+  '/develop': 'develop',
 };
 
-let currentPage = "control";
+let currentPage = 'control';
 
 function pageFromPath(pathname) {
-  const path = (pathname || "/").replace(/\/$/, "") || "/";
-  return PATH_TO_PAGE[path] || "control";
+  const path = (pathname || '/').replace(/\/$/, '') || '/';
+  return PATH_TO_PAGE[path] || 'control';
 }
 
+// The sticky control card sits just under the nav, whose height changes when
+// its buttons wrap.
+(function trackNavHeight() {
+  const nav = document.querySelector('.nav');
+  if (!nav || typeof ResizeObserver !== 'function') return;
+  const apply = () => document.documentElement.style.setProperty('--nav-h', `${nav.offsetHeight}px`);
+  apply();
+  new ResizeObserver(apply).observe(nav);
+})();
+
 function showPage(name, push) {
-  if (!PAGE_META[name]) name = "control";
+  if (!PAGE_META[name]) name = 'control';
   currentPage = name;
   document.body.dataset.page = name;
-  document.body.classList.toggle("has-live", LIVE_PAGES.has(name));
-  document.querySelectorAll(".page").forEach((el) => {
-    el.classList.toggle("active", el.dataset.page === name);
+  document.body.classList.toggle('has-live', LIVE_PAGES.has(name));
+  document.querySelectorAll('.page').forEach((el) => {
+    el.classList.toggle('active', el.dataset.page === name);
   });
-  document.querySelectorAll("[data-nav]").forEach((el) => {
+  document.querySelectorAll('[data-nav]').forEach((el) => {
     const on = el.dataset.nav === name;
-    el.classList.toggle("active", on);
-    if (on) el.setAttribute("aria-current", "page");
-    else el.removeAttribute("aria-current");
+    el.classList.toggle('active', on);
+    if (on) el.setAttribute('aria-current', 'page');
+    else el.removeAttribute('aria-current');
   });
-  $("page-title").textContent = PAGE_META[name].title;
-  $("page-lede").textContent = PAGE_META[name].lede;
+  $('page-title').textContent = PAGE_META[name].title;
+  $('page-lede').textContent = PAGE_META[name].lede;
   updateTitle();
   loadFrameIfVisible();
   if (push) {
     const link = document.querySelector(`[data-nav="${name}"]`);
-    const href = (link && link.getAttribute("href")) || "/control";
-    if (location.pathname !== href) history.pushState({ page: name }, "", href);
+    const href = (link && link.getAttribute('href')) || '/control';
+    if (location.pathname !== href) history.pushState({ page: name }, '', href);
   }
-  if (name === "wishlist") renderWishlist();
+  if (name === 'wishlist') renderWishlist();
 }
 
-document.querySelector(".nav").addEventListener("click", (ev) => {
-  const link = ev.target.closest("[data-nav]");
+document.querySelector('.nav').addEventListener('click', (ev) => {
+  const link = ev.target.closest('[data-nav]');
   if (!link) return;
   ev.preventDefault();
   showPage(link.dataset.nav, true);
 });
-window.addEventListener("popstate", () => showPage(pageFromPath(location.pathname), false));
+window.addEventListener('popstate', () => showPage(pageFromPath(location.pathname), false));
 
 // Per-browser view choices only (filters, folds). Bot settings live on the server.
 function localGet(key, fallback) {
@@ -106,66 +116,66 @@ function localSet(key, value) {
 // Looks the header selector offers. Each id needs a matching block in themes.css
 // (the default one is the plain :root palette in style.css).
 const THEMES = [
-  { id: "farm", label: "🌾 Nông trại", color: "#4b9427" },
-  { id: "pastel", label: "🌸 Hồng pastel", color: "#f7a8c6" },
+  { id: 'farm', label: '🌾 Nông trại', color: '#4b9427' },
+  { id: 'pastel', label: '🌸 Hồng pastel', color: '#f7a8c6' },
 ];
 
 function applyTheme(id) {
   const theme = THEMES.find((t) => t.id === id) || THEMES[0];
   document.documentElement.dataset.theme = theme.id;
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", theme.color);
+  if (meta) meta.setAttribute('content', theme.color);
   return theme;
 }
 
 (function initThemes() {
-  const select = document.getElementById("theme-select");
-  const current = applyTheme(localGet("theme", THEMES[0].id));
+  const select = document.getElementById('theme-select');
+  const current = applyTheme(localGet('theme', THEMES[0].id));
   if (!select) return;
-  select.innerHTML = THEMES.map((t) => `<option value="${t.id}">${t.label}</option>`).join("");
+  select.innerHTML = THEMES.map((t) => `<option value="${t.id}">${t.label}</option>`).join('');
   select.value = current.id;
-  select.addEventListener("change", () => {
-    localSet("theme", applyTheme(select.value).id);
+  select.addEventListener('change', () => {
+    localSet('theme', applyTheme(select.value).id);
   });
 })();
 
 function toast(message, err = false) {
   if (!message) return;
-  const box = $("toasts");
-  const el = document.createElement("div");
-  el.className = `toast${err ? " err" : ""}`;
-  el.setAttribute("role", err ? "alert" : "status");
-  const text = document.createElement("span");
+  const box = $('toasts');
+  const el = document.createElement('div');
+  el.className = `toast${err ? ' err' : ''}`;
+  el.setAttribute('role', err ? 'alert' : 'status');
+  const text = document.createElement('span');
   text.textContent = message;
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "toast-x";
-  close.setAttribute("aria-label", "Đóng");
-  close.textContent = "×";
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'toast-x';
+  close.setAttribute('aria-label', 'Đóng');
+  close.textContent = '×';
   el.append(text, close);
   let gone = false;
   const dismiss = () => {
     if (gone) return;
     gone = true;
-    el.classList.add("out");
+    el.classList.add('out');
     setTimeout(() => el.remove(), 200);
   };
-  close.addEventListener("click", dismiss);
+  close.addEventListener('click', dismiss);
   box.appendChild(el);
   while (box.children.length > 4) box.firstElementChild.remove();
   setTimeout(dismiss, err ? 8000 : 3500);
 }
 
-function confirmDialog({ title = "Xác nhận", message = "", ok = "Xoá", danger = true } = {}) {
-  const dlg = $("confirm-modal");
-  $("confirm-title").textContent = title;
-  $("confirm-message").textContent = message;
-  const okBtn = $("confirm-ok");
+function confirmDialog({ title = 'Xác nhận', message = '', ok = 'Xoá', danger = true } = {}) {
+  const dlg = $('confirm-modal');
+  $('confirm-title').textContent = title;
+  $('confirm-message').textContent = message;
+  const okBtn = $('confirm-ok');
   okBtn.textContent = ok;
-  okBtn.className = danger ? "btn danger solid" : "btn primary";
-  dlg.returnValue = "";
+  okBtn.className = danger ? 'btn danger solid' : 'btn primary';
+  dlg.returnValue = '';
   return new Promise((resolve) => {
-    dlg.addEventListener("close", () => resolve(dlg.returnValue === "ok"), { once: true });
+    dlg.addEventListener('close', () => resolve(dlg.returnValue === 'ok'), { once: true });
     // Focus lands on Huỷ (first button): Enter alone never deletes.
     dlg.showModal();
   });
@@ -173,17 +183,17 @@ function confirmDialog({ title = "Xác nhận", message = "", ok = "Xoá", dange
 
 async function api(url, options) {
   const res = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
+    headers: { 'Content-Type': 'application/json' },
     ...options,
   });
   let data = {};
   try {
     data = await res.json();
   } catch (err) {
-    throw new Error("Web API cũ hoặc không phải JSON — tắt tab cũ, mở lại đúng cổng");
+    throw new Error('Web API cũ hoặc không phải JSON — tắt tab cũ, mở lại đúng cổng');
   }
   if (!res.ok) {
-    const error = new Error(data.error === "bot is running" ? "Bot đang chạy — bấm Dừng trước" : data.error || res.statusText);
+    const error = new Error(data.error === 'bot is running' ? 'Bot đang chạy — bấm Dừng trước' : data.error || res.statusText);
     error.status = res.status;
     throw error;
   }
@@ -194,17 +204,13 @@ function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("Không đọc được ảnh"));
+    reader.onerror = () => reject(new Error('Không đọc được ảnh'));
     reader.readAsDataURL(file);
   });
 }
 
 function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ---------------------------------------------------------------- time
@@ -218,14 +224,14 @@ function serverNow() {
 }
 
 function ts(iso) {
-  const t = Date.parse(iso || "");
+  const t = Date.parse(iso || '');
   return Number.isFinite(t) ? t : 0;
 }
 
 function relTime(ms) {
-  if (!ms) return "";
+  if (!ms) return '';
   const s = Math.max(0, Math.round((serverNow() - ms) / 1000));
-  if (s < 45) return "vừa xong";
+  if (s < 45) return 'vừa xong';
   const m = Math.round(s / 60);
   if (m < 60) return `${m} phút trước`;
   const h = Math.round(m / 60);
@@ -238,14 +244,14 @@ function fmtDuration(ms) {
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  const pad = (n) => String(n).padStart(2, "0");
+  const pad = (n) => String(n).padStart(2, '0');
   return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
 function formatBuyTime(iso) {
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso || "";
-  const pad = (n) => String(n).padStart(2, "0");
+  if (Number.isNaN(date.getTime())) return iso || '';
+  const pad = (n) => String(n).padStart(2, '0');
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
 }
 
@@ -255,33 +261,41 @@ let configDirty = false;
 
 function setConfigDirty(on) {
   configDirty = on;
-  $("config-dirty").hidden = !on;
-  $("config-reset").disabled = !on;
+  $('config-dirty').hidden = !on;
+  $('config-reset').disabled = !on;
 }
 
 // A refresh after some other action must not wipe half-typed settings.
 function fillConfig(cfg, force = false) {
   if (!cfg || (configDirty && !force)) return;
-  $("adb_host").value = cfg.adb_host || "";
-  $("adb_port").value = cfg.adb_port ?? "";
-  $("adb_bin").value = cfg.adb_bin || "";
-  $("package").value = cfg.package || "";
-  $("template_threshold").value = cfg.template_threshold;
-  $("buy_threshold").value = cfg.buy_threshold ?? 0.72;
-  $("news_threshold").value = cfg.news_threshold ?? 0.72;
-  $("action_wait_s").value = cfg.action_wait_s ?? 0.9;
-  $("buy_wait_s").value = cfg.buy_wait_s ?? 2;
-  $("visit_wait_s").value = cfg.visit_wait_s ?? 2.5;
-  $("poll_interval_s").value = cfg.poll_interval_s ?? 0;
-  $("stall_swipe_ms").value = cfg.stall_swipe_ms ?? 280;
-  $("swipe_duration_ms").value = cfg.swipe_duration_ms;
-  $("debug").checked = Boolean(cfg.debug);
+  $('adb_host').value = cfg.adb_host || '';
+  $('adb_port').value = cfg.adb_port ?? '';
+  $('adb_bin').value = cfg.adb_bin || '';
+  $('package').value = cfg.package || '';
+  $('template_threshold').value = cfg.template_threshold;
+  $('buy_threshold').value = cfg.buy_threshold ?? 0.72;
+  $('news_threshold').value = cfg.news_threshold ?? 0.72;
+  $('action_wait_s').value = cfg.action_wait_s ?? 0.9;
+  $('buy_wait_s').value = cfg.buy_wait_s ?? 2;
+  $('visit_wait_s').value = cfg.visit_wait_s ?? 2.5;
+  $('poll_interval_s').value = cfg.poll_interval_s ?? 0;
+  $('stall_swipe_ms').value = cfg.stall_swipe_ms ?? 280;
+  $('swipe_duration_ms').value = cfg.swipe_duration_ms;
+  $('debug').checked = Boolean(cfg.debug);
+  // The token itself never reaches the page; show which one is saved.
+  $('telegram_token').value = '';
+  $('telegram_token').placeholder = cfg.telegram_token_set
+    ? `Đã lưu …${cfg.telegram_token_hint} — để trống để giữ`
+    : '123456789:AAF…';
+  $('btn-telegram-clear').hidden = !cfg.telegram_token_set;
+  $('telegram_chat_id').value = cfg.telegram_chat_id || '';
+  $('telegram_buys').checked = cfg.telegram_buys !== false;
   setConfigDirty(false);
 }
 
-$("config-form").addEventListener("input", () => setConfigDirty(true));
-$("config-form").addEventListener("change", () => setConfigDirty(true));
-$("config-reset").addEventListener("click", () => fillConfig(lastState.config, true));
+$('config-form').addEventListener('input', () => setConfigDirty(true));
+$('config-form').addEventListener('change', () => setConfigDirty(true));
+$('config-reset').addEventListener('click', () => fillConfig(lastState.config, true));
 
 // ---------------------------------------------------------------- run prefs
 
@@ -289,37 +303,37 @@ let prefsTimer = 0;
 let prefsPending = false;
 
 function currentPrefs() {
-  const limit = Number($("run-limit").value);
-  const rest = $("run-rest-min").value;
+  const limit = Number($('run-limit').value);
+  const rest = $('run-rest-min').value;
   return {
-    harvest: $("bh").checked,
-    plant: $("bp").checked,
-    newspaper: $("bn").checked,
-    news_mode: $("news-mode").value,
-    crop: $("run-crop").value || "wheat",
+    harvest: $('bh').checked,
+    plant: $('bp').checked,
+    newspaper: $('bn').checked,
+    news_mode: $('news-mode').value,
+    crop: $('run-crop').value || 'wheat',
     limit: Number.isFinite(limit) && limit > 0 ? limit : 1,
-    loop_rest_min: rest === "" ? undefined : Number(rest),
+    loop_rest_min: rest === '' ? undefined : Number(rest),
   };
 }
 
 function fillCropOptions(crops, selected) {
-  const sel = $("run-crop");
+  const sel = $('run-crop');
   const keep = selected || sel.value;
   const ids = (crops || []).map((crop) => crop.id);
   if (keep && !ids.includes(keep)) ids.push(keep);
-  if (!ids.length) ids.push("wheat");
-  sel.innerHTML = ids.map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join("");
+  if (!ids.length) ids.push('wheat');
+  sel.innerHTML = ids.map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join('');
   sel.value = ids.includes(keep) ? keep : ids[0];
 }
 
 function syncPrefsUi() {
-  const plant = $("bp").checked;
-  const news = $("bn").checked;
+  const plant = $('bp').checked;
+  const news = $('bn').checked;
   // Only the fields the chosen behaviours use are shown.
-  $("lbl-crop").hidden = !plant;
-  $("lbl-news-mode").hidden = !news;
+  $('lbl-crop').hidden = !plant;
+  $('lbl-news-mode').hidden = !news;
   // Rest only happens once every shop on the paper was visited.
-  $("lbl-rest").hidden = !news;
+  $('lbl-rest').hidden = !news;
   updatePrefsSummary();
 }
 
@@ -329,31 +343,31 @@ function updatePrefsSummary() {
   const parts = [];
   if (p.plant) parts.push(p.crop);
   if (p.newspaper) {
-    const mode = $("news-mode").selectedOptions[0];
+    const mode = $('news-mode').selectedOptions[0];
     if (mode) parts.push(mode.textContent);
   }
   parts.push(`${p.limit}/vòng`);
   if (p.newspaper && p.loop_rest_min !== undefined) parts.push(`nghỉ ${p.loop_rest_min} phút`);
-  $("prefs-summary").textContent = parts.join(" · ");
+  $('prefs-summary').textContent = parts.join(' · ');
 }
 
 function fillRunPrefs(prefs) {
   if (!prefs || prefsPending) return;
-  $("bh").checked = Boolean(prefs.harvest);
-  $("bp").checked = Boolean(prefs.plant);
-  $("bn").checked = Boolean(prefs.newspaper);
-  $("news-mode").value = prefs.news_mode || "sweep";
+  $('bh').checked = Boolean(prefs.harvest);
+  $('bp').checked = Boolean(prefs.plant);
+  $('bn').checked = Boolean(prefs.newspaper);
+  $('news-mode').value = prefs.news_mode || 'sweep';
   fillCropOptions(lastState.crops, prefs.crop);
   const focused = document.activeElement;
-  if (focused !== $("run-limit")) $("run-limit").value = prefs.limit;
-  if (focused !== $("run-rest-min")) $("run-rest-min").value = prefs.loop_rest_min;
+  if (focused !== $('run-limit')) $('run-limit').value = prefs.limit;
+  if (focused !== $('run-rest-min')) $('run-rest-min').value = prefs.loop_rest_min;
   syncPrefsUi();
 }
 
 function queuePrefsSave() {
   prefsPending = true;
   syncPrefsUi();
-  $("prefs-status").textContent = "Đang lưu…";
+  $('prefs-status').textContent = 'Đang lưu…';
   clearTimeout(prefsTimer);
   prefsTimer = setTimeout(savePrefs, 400);
 }
@@ -362,21 +376,21 @@ async function savePrefs() {
   clearTimeout(prefsTimer);
   if (!prefsPending) return;
   try {
-    const res = await api("/api/run-prefs", { method: "PUT", body: JSON.stringify(currentPrefs()) });
+    const res = await api('/api/run-prefs', { method: 'PUT', body: JSON.stringify(currentPrefs()) });
     lastState.run_prefs = res.run_prefs;
     prefsPending = false;
     fillRunPrefs(res.run_prefs);
-    $("prefs-status").textContent = "Đã lưu ✓";
+    $('prefs-status').textContent = 'Đã lưu ✓';
   } catch (err) {
     prefsPending = false;
-    $("prefs-status").textContent = "";
+    $('prefs-status').textContent = '';
     toast(`Không lưu được tuỳ chọn: ${err.message}`, true);
   }
 }
 
-$("run-prefs").addEventListener("change", queuePrefsSave);
-$("run-prefs").addEventListener("input", (ev) => {
-  if (ev.target.type === "number") queuePrefsSave();
+$('run-prefs').addEventListener('change', queuePrefsSave);
+$('run-prefs').addEventListener('input', (ev) => {
+  if (ev.target.type === 'number') queuePrefsSave();
 });
 
 // ---------------------------------------------------------------- cards
@@ -390,28 +404,21 @@ function templateUrl(name) {
 }
 
 function missingLabel(item) {
-  if (item.has_image && item.has_news_image) return "";
-  if (item.has_image) return "thiếu báo";
-  if (item.has_news_image) return "thiếu shop";
-  return "thiếu ảnh";
+  if (item.has_image && item.has_news_image) return '';
+  if (item.has_image) return 'thiếu báo';
+  if (item.has_news_image) return 'thiếu shop';
+  return 'thiếu ảnh';
 }
 
 function itemCard(item) {
   const id = escapeHtml(item.id);
-  const shop = item.has_image
-    ? `<img src="${templateUrl(item.template)}" alt="shop ${id}" loading="lazy" />`
-    : `<div class="ph">Thiếu shop</div>`;
-  const news = item.has_news_image
-    ? `<img src="${templateUrl(item.news_template)}" alt="báo ${id}" loading="lazy" />`
-    : `<div class="ph">Thiếu báo</div>`;
+  const shop = item.has_image ? `<img src="${templateUrl(item.template)}" alt="shop ${id}" loading="lazy" />` : `<div class="ph">Thiếu shop</div>`;
+  const news = item.has_news_image ? `<img src="${templateUrl(item.news_template)}" alt="báo ${id}" loading="lazy" />` : `<div class="ph">Thiếu báo</div>`;
   const missing = missingLabel(item);
   const stat = buyIndex[item.id] || {};
   const buys = Number(stat.buy_count) || 0;
-  const badges = [
-    missing ? `<span class="badge bad">${missing}</span>` : "",
-    buys ? `<span class="badge ok" title="Lần mua thành công">đã mua ${buys}</span>` : "",
-  ].join("");
-  return `<article class="tile item-tile${item.enabled ? "" : " off"}" tabindex="0" data-id="${id}" data-template="${escapeHtml(item.template)}" data-news-template="${escapeHtml(item.news_template)}" data-has-image="${item.has_image ? "1" : ""}" data-has-news="${item.has_news_image ? "1" : ""}" title="Bấm để sửa ${id}">
+  const badges = [missing ? `<span class="badge bad">${missing}</span>` : '', buys ? `<span class="badge ok" title="Lần mua thành công">đã mua ${buys}</span>` : ''].join('');
+  return `<article class="tile item-tile${item.enabled ? '' : ' off'}" tabindex="0" data-id="${id}" data-template="${escapeHtml(item.template)}" data-news-template="${escapeHtml(item.news_template)}" data-has-image="${item.has_image ? '1' : ''}" data-has-news="${item.has_news_image ? '1' : ''}" title="Bấm để sửa ${id}">
     <div class="pair">
       <div><span class="thumb-cap">Shop</span>${shop}</div>
       <div><span class="thumb-cap">Báo</span>${news}</div>
@@ -420,7 +427,7 @@ function itemCard(item) {
     <div class="tile-foot">
       <div class="badges">${badges}</div>
       <label class="switch" title="Bật/tắt mua ${id}">
-        <input type="checkbox" data-toggle="${id}" ${item.enabled ? "checked" : ""} />
+        <input type="checkbox" data-toggle="${id}" ${item.enabled ? 'checked' : ''} />
         <span class="track" aria-hidden="true"></span>
         <span class="switch-label">Mua</span>
       </label>
@@ -429,9 +436,7 @@ function itemCard(item) {
 }
 
 function cropCard(crop) {
-  const img = crop.has_image
-    ? `<img src="${templateUrl(crop.seed_template)}" alt="${escapeHtml(crop.id)}" />`
-    : `<div class="ph">Thiếu hạt<br>${escapeHtml(crop.seed_template)}.png</div>`;
+  const img = crop.has_image ? `<img src="${templateUrl(crop.seed_template)}" alt="${escapeHtml(crop.id)}" />` : `<div class="ph">Thiếu hạt<br>${escapeHtml(crop.seed_template)}.png</div>`;
   return `<article class="tile">
     ${img}
     <div class="name">${escapeHtml(crop.id)}</div>
@@ -446,12 +451,12 @@ function templateCard(tpl) {
   return `<article class="tile">
     <img src="${templateUrl(tpl.name)}" alt="${escapeHtml(tpl.name)}" loading="lazy" />
     <div class="name">${escapeHtml(tpl.name)}</div>
-    <div class="meta">${escapeHtml(tpl.kind)}${tpl.width ? ` · ${tpl.width}×${tpl.height}` : ""}</div>
+    <div class="meta">${escapeHtml(tpl.kind)}${tpl.width ? ` · ${tpl.width}×${tpl.height}` : ''}</div>
   </article>`;
 }
 
 let lastState = {};
-let libraryFilter = localGet("libFilter", "all");
+let libraryFilter = localGet('libFilter', 'all');
 let pickerSlot = null;
 
 function libraryUrl(id) {
@@ -459,12 +464,10 @@ function libraryUrl(id) {
 }
 
 function libraryCard(row, { pick = false } = {}) {
-  const kindLabel = row.kind === "news" ? "Báo" : "Shop";
-  const size = row.width ? ` · ${row.width}×${row.height}` : "";
-  const action = pick
-    ? ""
-    : `<div class="row"><button class="btn danger btn-compact" type="button" data-del-lib="${escapeHtml(row.id)}">Xoá</button></div>`;
-  const pickAttr = pick ? ` data-pick-lib="${escapeHtml(row.id)}" tabindex="0"` : "";
+  const kindLabel = row.kind === 'news' ? 'Báo' : 'Shop';
+  const size = row.width ? ` · ${row.width}×${row.height}` : '';
+  const action = pick ? '' : `<div class="row"><button class="btn danger btn-compact" type="button" data-del-lib="${escapeHtml(row.id)}">Xoá</button></div>`;
+  const pickAttr = pick ? ` data-pick-lib="${escapeHtml(row.id)}" tabindex="0"` : '';
   return `<article class="tile"${pickAttr}>
     <img src="${libraryUrl(row.id)}" alt="${escapeHtml(row.id)}" loading="lazy" />
     <div class="name">${escapeHtml(row.id)}</div>
@@ -475,20 +478,18 @@ function libraryCard(row, { pick = false } = {}) {
 
 function renderLibrary(rows) {
   const list = rows || [];
-  const shown = libraryFilter === "all" ? list : list.filter((row) => row.kind === libraryFilter);
-  $("library").innerHTML = shown.length
-    ? shown.map((row) => libraryCard(row)).join("")
-    : `<p class="empty">Chưa có icon. Chụp từ Phát triển hoặc tải PNG.</p>`;
-  document.querySelectorAll("[data-lib-filter]").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.libFilter === libraryFilter);
+  const shown = libraryFilter === 'all' ? list : list.filter((row) => row.kind === libraryFilter);
+  $('library').innerHTML = shown.length ? shown.map((row) => libraryCard(row)).join('') : `<p class="empty">Chưa có icon. Chụp từ Phát triển hoặc tải PNG.</p>`;
+  document.querySelectorAll('[data-lib-filter]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.libFilter === libraryFilter);
   });
 }
 
 // ---------------------------------------------------------------- wishlist
 
-let wishFilter = localGet("wishFilter", "all");
-let wishSort = localGet("wishSort", "name");
-let wishQuery = "";
+let wishFilter = localGet('wishFilter', 'all');
+let wishSort = localGet('wishSort', 'name');
+let wishQuery = '';
 let buyIndex = {};
 
 function hasMissing(item) {
@@ -497,9 +498,9 @@ function hasMissing(item) {
 
 function wishMatches(item) {
   if (wishQuery && !item.id.includes(wishQuery)) return false;
-  if (wishFilter === "on") return item.enabled;
-  if (wishFilter === "off") return !item.enabled;
-  if (wishFilter === "missing") return hasMissing(item);
+  if (wishFilter === 'on') return item.enabled;
+  if (wishFilter === 'off') return !item.enabled;
+  if (wishFilter === 'missing') return hasMissing(item);
   return true;
 }
 
@@ -523,38 +524,39 @@ function renderWishlist() {
     off: all.filter((item) => !item.enabled).length,
     missing: all.filter(hasMissing).length,
   };
-  document.querySelectorAll("[data-count]").forEach((el) => {
+  document.querySelectorAll('[data-count]').forEach((el) => {
     el.textContent = counts[el.dataset.count];
   });
-  document.querySelectorAll("[data-wish-filter]").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.wishFilter === wishFilter);
+  document.querySelectorAll('[data-wish-filter]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.wishFilter === wishFilter);
   });
-  $("wish-sort").value = wishSort;
-  $("wish-count").textContent = all.length ? `${counts.on}/${counts.all} đang mua` : "";
+  $('wish-sort').value = wishSort;
+  $('wish-count').textContent = all.length ? `${counts.on}/${counts.all} đang mua` : '';
   const shown = visibleWishlist();
-  $("wish-shown").textContent = all.length ? `Hiện ${shown.length} / ${all.length} item` : "";
-  document.querySelectorAll("[data-bulk]").forEach((btn) => {
+  $('wish-shown').textContent = all.length ? `Hiện ${shown.length} / ${all.length} item` : '';
+  document.querySelectorAll('[data-bulk]').forEach((btn) => {
     btn.disabled = !shown.length;
   });
   if (!all.length) {
     // lastState.wishlist is only a real (empty) list once the server answered.
     if (!Array.isArray(lastState.wishlist)) return;
-    $("items").innerHTML = `<p class="empty">Chưa có item. Mở “Thêm vật phẩm” ở trên, crop icon từ shop rồi thêm <code>wheat</code>.</p>`;
-    $("item-add").open = true;
+    $('items').innerHTML = `<p class="empty">Chưa có item. Mở “Thêm vật phẩm” ở trên, crop icon từ shop rồi thêm <code>wheat</code>.</p>`;
+    $('item-add').open = true;
     return;
   }
-  $("items").innerHTML = shown.length
-    ? shown.map(itemCard).join("")
-    : `<p class="empty">Không có item khớp bộ lọc.</p>`;
+  $('items').innerHTML = shown.length ? shown.map(itemCard).join('') : `<p class="empty">Không có item khớp bộ lọc.</p>`;
 }
 
-$("wish-search").addEventListener("input", (ev) => {
-  wishQuery = ev.target.value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+$('wish-search').addEventListener('input', (ev) => {
+  wishQuery = ev.target.value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
   renderWishlist();
 });
-$("wish-sort").addEventListener("change", (ev) => {
+$('wish-sort').addEventListener('change', (ev) => {
   wishSort = ev.target.value;
-  localSet("wishSort", wishSort);
+  localSet('wishSort', wishSort);
   renderWishlist();
 });
 
@@ -563,23 +565,23 @@ async function bulkToggle(on) {
     .filter((item) => item.enabled !== on)
     .map((item) => item.id);
   if (!ids.length) {
-    toast(on ? "Các item đang hiện đều đã bật" : "Các item đang hiện đều đã tắt");
+    toast(on ? 'Các item đang hiện đều đã bật' : 'Các item đang hiện đều đã tắt');
     return;
   }
   const ok = await confirmDialog({
-    title: on ? "Bật mua hàng loạt?" : "Tắt mua hàng loạt?",
-    message: `${on ? "Bật" : "Tắt"} mua ${ids.length} item đang hiện: ${ids.slice(0, 8).join(", ")}${ids.length > 8 ? "…" : ""}`,
-    ok: `${on ? "Bật" : "Tắt"} ${ids.length} item`,
+    title: on ? 'Bật mua hàng loạt?' : 'Tắt mua hàng loạt?',
+    message: `${on ? 'Bật' : 'Tắt'} mua ${ids.length} item đang hiện: ${ids.slice(0, 8).join(', ')}${ids.length > 8 ? '…' : ''}`,
+    ok: `${on ? 'Bật' : 'Tắt'} ${ids.length} item`,
     danger: !on,
   });
   if (!ok) return;
   try {
-    const state = await api("/api/items/bulk", {
-      method: "POST",
+    const state = await api('/api/items/bulk', {
+      method: 'POST',
       body: JSON.stringify({ ids, enabled: on }),
     });
     render(state);
-    toast(`Đã ${on ? "bật" : "tắt"} ${state.changed} item`);
+    toast(`Đã ${on ? 'bật' : 'tắt'} ${state.changed} item`);
   } catch (err) {
     toast(err.message, true);
   }
@@ -592,11 +594,9 @@ function render(state) {
   lastState = { ...lastState, ...state };
   fillConfig(state.config);
   if (state.crops) {
-    $("crops").innerHTML = state.crops.length
-      ? state.crops.map(cropCard).join("")
-      : `<p class="empty">Chưa có cây trồng.</p>`;
+    $('crops').innerHTML = state.crops.length ? state.crops.map(cropCard).join('') : `<p class="empty">Chưa có cây trồng.</p>`;
     if (!prefsPending) {
-      fillCropOptions(state.crops, $("run-crop").value);
+      fillCropOptions(state.crops, $('run-crop').value);
       updatePrefsSummary();
     }
   }
@@ -609,14 +609,14 @@ function render(state) {
     if (pickerSlot) renderPickerGrid();
   }
   if (state.templates) {
-    const system = state.templates.filter((t) => t.kind === "system");
-    $("templates").innerHTML = system.map(templateCard).join("");
+    const system = state.templates.filter((t) => t.kind === 'system');
+    $('templates').innerHTML = system.map(templateCard).join('');
   }
   if (state.run) renderRun(state.run);
 }
 
 async function refresh() {
-  render(await api("/api/state"));
+  render(await api('/api/state'));
 }
 
 // ---------------------------------------------------------------- polling
@@ -625,7 +625,7 @@ let pollTimer = 0;
 let serverOnline = true;
 
 function pollDelay() {
-  const busy = lastRun && lastRun.status === "running";
+  const busy = lastRun && lastRun.status === 'running';
   // A hidden tab still polls (slowly) so it can raise the error notification.
   if (document.hidden) return busy ? 5000 : 15000;
   return busy ? 1000 : 3000;
@@ -639,8 +639,8 @@ function schedulePoll(delay) {
 // What this page already holds. The server leaves the log and the purchase
 // history out of a poll while these still match: a quiet poll is ~1 KB and
 // reads no file, instead of ~20 KB and every item PNG each second.
-let knownLogSeq = "";
-let knownBuysRev = "";
+let knownLogSeq = '';
+let knownBuysRev = '';
 
 async function pollStatus() {
   try {
@@ -648,7 +648,7 @@ async function pollStatus() {
     const status = await api(`/api/status?${query}`);
     if (!serverOnline) {
       serverOnline = true;
-      toast("Đã kết nối lại server web");
+      toast('Đã kết nối lại server web');
       // The server may have restarted: config, prefs and lists could differ.
       await refresh().catch(() => {});
     }
@@ -658,14 +658,14 @@ async function pollStatus() {
   } catch (err) {
     if (serverOnline) {
       serverOnline = false;
-      toast("Mất kết nối server web — đang thử lại…", true);
+      toast('Mất kết nối server web — đang thử lại…', true);
     }
     renderDevicePill();
   }
   schedulePoll();
 }
 
-document.addEventListener("visibilitychange", () => {
+document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     loadFrameIfVisible();
     schedulePoll(0);
@@ -675,110 +675,110 @@ document.addEventListener("visibilitychange", () => {
 // ---------------------------------------------------------------- run state
 
 const RUN_LABELS = {
-  loop: "Vòng lặp",
-  connect: "Kết nối",
-  screenshot: "Chụp màn hình",
-  detect: "Nhận diện",
-  back: "Back",
-  home: "Home",
-  pan: "Pan camera",
-  harvest: "Thu hoạch",
-  plant: "Trồng",
-  newspaper: "Mua trên báo",
-  restart_game: "Khởi động lại game",
-  go_home: "Về nhà",
-  find_column: "Tìm cột báo",
-  open_newspaper: "Mở báo",
-  scan_ads: "Quét tin",
-  swipe_newspaper: "Lật trang",
-  visit_shop: "Vào shop",
-  buy_wishlist: "Mua wishlist",
-  close_shop: "Đóng shop",
-  buy_shop: "Nhận diện & mua",
-  capture_shop: "Lưu icon shop",
-  capture_news: "Lưu icon tin báo",
+  loop: 'Vòng lặp',
+  connect: 'Kết nối',
+  screenshot: 'Chụp màn hình',
+  detect: 'Nhận diện',
+  back: 'Back',
+  home: 'Home',
+  pan: 'Pan camera',
+  harvest: 'Thu hoạch',
+  plant: 'Trồng',
+  newspaper: 'Mua trên báo',
+  restart_game: 'Khởi động lại game',
+  go_home: 'Về nhà',
+  find_column: 'Tìm cột báo',
+  open_newspaper: 'Mở báo',
+  scan_ads: 'Quét tin',
+  swipe_newspaper: 'Lật trang',
+  visit_shop: 'Vào shop',
+  buy_wishlist: 'Mua wishlist',
+  close_shop: 'Đóng shop',
+  buy_shop: 'Nhận diện & mua',
+  capture_shop: 'Lưu icon shop',
+  capture_news: 'Lưu icon tin báo',
 };
 const PHASE_LABELS = {
-  home: "về nhà",
-  harvest: "thu hoạch",
-  plant: "trồng",
-  newspaper: "ghé shop trên báo",
-  rest: "nghỉ giữa vòng",
+  home: 'về nhà',
+  harvest: 'thu hoạch',
+  plant: 'trồng',
+  newspaper: 'ghé shop trên báo',
+  rest: 'nghỉ giữa vòng',
 };
 // Jobs that finish too often to toast each time.
-const QUIET_JOBS = new Set(["screenshot", "pan"]);
+const QUIET_JOBS = new Set(['screenshot', 'pan']);
 // Jobs that add icons to the library: reload the lists once they finish.
-const REFRESH_AFTER = new Set(["capture_shop", "capture_news"]);
+const REFRESH_AFTER = new Set(['capture_shop', 'capture_news']);
 
 let lastRun = null;
 let lastFrameSeq = -1;
-let lastLogText = "";
+let lastLogText = '';
 let sessionBuys = 0;
 
 function jobLabel(job) {
-  return RUN_LABELS[job] || job || "";
+  return RUN_LABELS[job] || job || '';
 }
 
 function renderDevicePill() {
-  const device = $("device-pill");
+  const device = $('device-pill');
   if (!serverOnline) {
-    device.textContent = "Mất kết nối server";
-    device.className = "pill err";
+    device.textContent = 'Mất kết nối server';
+    device.className = 'pill err';
     return;
   }
   const run = lastRun || {};
-  device.textContent = run.connected ? run.serial || "Đã kết nối" : "Chưa kết nối";
-  device.className = `pill${run.connected ? " live" : ""}`;
+  device.textContent = run.connected ? run.serial || 'Đã kết nối' : 'Chưa kết nối';
+  device.className = `pill${run.connected ? ' live' : ''}`;
 }
 
 function renderRun(run) {
   if (!run) return;
-  if (typeof run.now === "number") clockOffset = run.now * 1000 - Date.now();
+  if (typeof run.now === 'number') clockOffset = run.now * 1000 - Date.now();
   const prev = lastRun;
   lastRun = run;
   renderDevicePill();
 
-  const pill = $("run-pill");
-  const busy = run.status === "running";
+  const pill = $('run-pill');
+  const busy = run.status === 'running';
   if (run.stopping) {
-    pill.textContent = "Đang dừng…";
-    pill.className = "pill warn";
+    pill.textContent = 'Đang dừng…';
+    pill.className = 'pill warn';
   } else if (busy && run.rest_until) {
-    pill.textContent = "⏸ Nghỉ giữa vòng";
-    pill.className = "pill live";
+    pill.textContent = '⏸ Nghỉ giữa vòng';
+    pill.className = 'pill live';
   } else if (busy) {
     pill.textContent = `▶ ${jobLabel(run.job)}`;
-    pill.className = "pill live";
-  } else if (run.status === "error") {
-    pill.textContent = "⚠ Lỗi";
-    pill.className = "pill err";
+    pill.className = 'pill live';
+  } else if (run.status === 'error') {
+    pill.textContent = '⚠ Lỗi';
+    pill.className = 'pill err';
   } else {
-    pill.textContent = "Sẵn sàng";
-    pill.className = "pill idle";
+    pill.textContent = 'Sẵn sàng';
+    pill.className = 'pill idle';
   }
 
-  document.querySelectorAll("[data-run], [data-pan]").forEach((btn) => {
-    btn.disabled = busy || (btn.id === "btn-shot" && !screenOn);
+  document.querySelectorAll('[data-run], [data-pan]').forEach((btn) => {
+    btn.disabled = busy || (btn.id === 'btn-shot' && !screenOn);
   });
-  $("btn-start").disabled = busy;
-  $("btn-stop").disabled = !busy || Boolean(run.stopping);
+  $('btn-start').disabled = busy;
+  $('btn-stop').disabled = !busy || Boolean(run.stopping);
 
   const note = [];
   if (run.screen) note.push(`Màn: ${run.screen}`);
   if (run.last_result) {
     const r = run.last_result;
-    note.push(`${r.action} ${r.ok ? "ok" : "fail"} ${r.target || ""} ${r.error || ""}`.trim());
+    note.push(`${r.action} ${r.ok ? 'ok' : 'fail'} ${r.target || ''} ${r.error || ''}`.trim());
   }
   if (run.last_error) note.push(run.last_error);
-  const noteText = note.join(" · ");
-  $("run-note").textContent = noteText;
+  const noteText = note.join(' · ');
+  $('run-note').textContent = noteText;
   // The row only has room for two lines; the tooltip carries the full text.
-  $("run-note").title = noteText;
+  $('run-note').title = noteText;
 
   // A poll leaves the log out when it has not moved since the last one.
   if (Array.isArray(run.logs)) {
     renderLog(run.logs);
-    knownLogSeq = String(run.log_seq ?? "");
+    knownLogSeq = String(run.log_seq ?? '');
   }
   renderTiming(run.timing);
   if (run.has_frame) {
@@ -794,58 +794,56 @@ function renderRun(run) {
 function renderRunStatus() {
   const run = lastRun;
   if (!run) return;
-  const busy = run.status === "running";
+  const busy = run.status === 'running';
   const resting = busy && run.rest_until;
-  const box = $("run-status");
-  let cls = "idle";
-  let title = "Sẵn sàng";
-  let sub = run.finished_at
-    ? `Lần chạy trước kết thúc ${relTime(run.finished_at * 1000)}.`
-    : "Chọn hành vi rồi bấm Bắt đầu.";
+  const box = $('run-status');
+  let cls = 'idle';
+  let title = 'Sẵn sàng';
+  let sub = run.finished_at ? `Lần chạy trước kết thúc ${relTime(run.finished_at * 1000)}.` : 'Chọn hành vi rồi bấm Bắt đầu.';
   if (run.stopping) {
-    cls = "stopping";
-    title = "Đang dừng…";
-    sub = "Đợi bước hiện tại xong rồi dừng.";
-  } else if (busy && run.job === "loop") {
-    cls = resting ? "resting" : "live";
-    title = `Vòng ${(run.rounds || 0) + (resting ? 0 : 1)} · ${PHASE_LABELS[run.phase] || "đang chạy"}`;
-    sub = resting ? "Hết shop trên báo, nghỉ rồi chạy vòng mới." : "Bot đang tự chơi. Bấm Dừng để ngắt.";
+    cls = 'stopping';
+    title = 'Đang dừng…';
+    sub = 'Đợi bước hiện tại xong rồi dừng.';
+  } else if (busy && run.job === 'loop') {
+    cls = resting ? 'resting' : 'live';
+    title = `Vòng ${(run.rounds || 0) + (resting ? 0 : 1)} · ${PHASE_LABELS[run.phase] || 'đang chạy'}`;
+    sub = resting ? 'Hết shop trên báo, nghỉ rồi chạy vòng mới.' : 'Bot đang tự chơi. Bấm Dừng để ngắt.';
   } else if (busy) {
-    cls = "live";
+    cls = 'live';
     title = `Đang chạy: ${jobLabel(run.job)}`;
-    sub = "Lệnh một lần — xong sẽ tự nghỉ.";
-  } else if (run.status === "error") {
-    cls = "err";
-    title = `Lỗi${run.job ? ` · ${jobLabel(run.job)}` : ""}`;
-    sub = run.last_error || "Xem nhật ký bên cạnh.";
+    sub = 'Lệnh một lần — xong sẽ tự nghỉ.';
+  } else if (run.status === 'error') {
+    cls = 'err';
+    title = `Lỗi${run.job ? ` · ${jobLabel(run.job)}` : ''}`;
+    sub = run.last_error || 'Xem nhật ký bên cạnh.';
   }
   box.className = `run-status ${cls}`;
-  $("run-status-title").textContent = title;
-  $("run-status-sub").textContent = sub;
+  $('run-status-title').textContent = title;
+  $('run-status-sub').textContent = sub;
 
   const started = run.started_at ? run.started_at * 1000 : 0;
   const ended = busy ? serverNow() : run.finished_at ? run.finished_at * 1000 : 0;
-  $("stat-elapsed").textContent = started && ended ? fmtDuration(ended - started) : "—";
-  $("stat-rounds").textContent = run.job === "loop" || run.rounds ? String(run.rounds || 0) : "—";
-  $("stat-buys").textContent = started ? String(sessionBuys) : "—";
+  $('stat-elapsed').textContent = started && ended ? fmtDuration(ended - started) : '—';
+  $('stat-rounds').textContent = run.job === 'loop' || run.rounds ? String(run.rounds || 0) : '—';
+  $('stat-buys').textContent = started ? String(sessionBuys) : '—';
 
-  const restBox = $("rest-box");
+  const restBox = $('rest-box');
   restBox.hidden = !resting;
   if (resting) {
     const left = Math.max(0, run.rest_until * 1000 - serverNow());
     const total = Math.max(1, (run.rest_s || 1) * 1000);
-    $("rest-left").textContent = fmtDuration(left + 999);
-    $("rest-bar-fill").style.width = `${Math.min(100, Math.max(0, 100 - (left / total) * 100))}%`;
+    $('rest-left').textContent = fmtDuration(left + 999);
+    $('rest-bar-fill').style.width = `${Math.min(100, Math.max(0, 100 - (left / total) * 100))}%`;
     // Read like the game's storage bar: "3:20 / 5:00".
-    $("rest-bar-label").textContent = `${fmtDuration(left + 999)} / ${fmtDuration(total)}`;
+    $('rest-bar-label').textContent = `${fmtDuration(left + 999)} / ${fmtDuration(total)}`;
   }
 }
 
 function renderFrameAge() {
   const run = lastRun;
-  const el = $("frame-age");
+  const el = $('frame-age');
   if (!screenOn || !run || !run.frame_at) {
-    el.textContent = "";
+    el.textContent = '';
     return;
   }
   const s = Math.max(0, Math.round((serverNow() - run.frame_at * 1000) / 1000));
@@ -858,9 +856,9 @@ setInterval(() => {
 }, 1000);
 
 function logClass(line) {
-  if (/\bFAIL\b|error|lỗi|Traceback/i.test(line)) return "log-fail";
-  if (/\b(ok|done)\b/.test(line)) return "log-ok";
-  return "";
+  if (/\bFAIL\b|error|lỗi|Traceback/i.test(line)) return 'log-fail';
+  if (/\b(ok|done)\b/.test(line)) return 'log-ok';
+  return '';
 }
 
 // The screen panel shows a ~110 KB JPEG (the link opens the full PNG). It is
@@ -869,26 +867,24 @@ function logClass(line) {
 let pendingFrameSeq = null;
 // The "Màn hình" switch: while off, no new frame is fetched (the bot itself
 // keeps taking screenshots) and the newest one loads when it is switched on.
-let screenOn = localGet("screenOn", true);
+let screenOn = localGet('screenOn', true);
 
 function applyScreenOn() {
-  $("live-panel").classList.toggle("screen-off", !screenOn);
+  $('live-panel').classList.toggle('screen-off', !screenOn);
   // Off keeps the frame on screen but shows a placeholder instead of the picture.
-  const empty = $("live-empty");
+  const empty = $('live-empty');
   if (!empty.dataset.idleText) empty.dataset.idleText = empty.textContent;
-  const hasPicture = Boolean($("live-frame").getAttribute("src"));
-  $("live-link").hidden = !screenOn || !hasPicture;
+  const hasPicture = Boolean($('live-frame').getAttribute('src'));
+  $('live-link').hidden = !screenOn || !hasPicture;
   empty.hidden = screenOn && hasPicture;
-  empty.textContent = screenOn ? empty.dataset.idleText : "Màn hình đang tắt — bấm nút Màn hình để bật lại";
-  const toggle = $("btn-screen-toggle");
-  toggle.setAttribute("aria-pressed", String(screenOn));
-  toggle.setAttribute("aria-label", screenOn ? "Màn hình: Bật" : "Màn hình: Tắt");
-  toggle.title = screenOn
-    ? "Màn hình đang bật. Bấm để ngừng tải ảnh mới về trình duyệt"
-    : "Màn hình đang tắt. Bấm để bật và tải ảnh mới nhất";
-  const shot = $("btn-shot");
-  shot.title = screenOn ? "Chụp màn hình máy" : "Bật màn hình để xem ảnh chụp";
-  shot.disabled = !screenOn || Boolean(lastRun && lastRun.status === "running");
+  empty.textContent = screenOn ? empty.dataset.idleText : 'Màn hình đang tắt — bấm nút Màn hình để bật lại';
+  const toggle = $('btn-screen-toggle');
+  toggle.setAttribute('aria-pressed', String(screenOn));
+  toggle.setAttribute('aria-label', screenOn ? 'Màn hình: Bật' : 'Màn hình: Tắt');
+  toggle.title = screenOn ? 'Màn hình đang bật. Bấm để ngừng tải ảnh mới về trình duyệt' : 'Màn hình đang tắt. Bấm để bật và tải ảnh mới nhất';
+  const shot = $('btn-shot');
+  shot.title = screenOn ? 'Chụp màn hình máy' : 'Bật màn hình để xem ảnh chụp';
+  shot.disabled = !screenOn || Boolean(lastRun && lastRun.status === 'running');
   if (screenOn) loadFrameIfVisible();
   renderFrameAge();
 }
@@ -897,45 +893,45 @@ function loadFrameIfVisible() {
   if (pendingFrameSeq === null || pendingFrameSeq === lastFrameSeq) return;
   if (!screenOn || !LIVE_PAGES.has(currentPage) || document.hidden) return;
   lastFrameSeq = pendingFrameSeq;
-  $("live-frame").src = `/api/frame.jpg?seq=${encodeURIComponent(lastFrameSeq)}`;
-  $("live-link").hidden = false;
-  $("live-empty").hidden = true;
+  $('live-frame').src = `/api/frame.jpg?seq=${encodeURIComponent(lastFrameSeq)}`;
+  $('live-link').hidden = false;
+  $('live-empty').hidden = true;
 }
 
 function renderLog(lines) {
-  const el = $("run-log");
+  const el = $('run-log');
   const list = (lines || []).slice(-60);
-  const text = list.join("\n");
+  const text = list.join('\n');
   if (text === lastLogText) return;
   lastLogText = text;
   // Follow new lines only when already at the bottom: scrolling up to read
   // an older line must not get yanked away every second.
   const stick = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-  el.innerHTML = list.map((line) => `<span class="${logClass(line)}">${escapeHtml(line)}</span>`).join("\n");
+  el.innerHTML = list.map((line) => `<span class="${logClass(line)}">${escapeHtml(line)}</span>`).join('\n');
   if (stick) el.scrollTop = el.scrollHeight;
 }
 
 function handleTransition(prev, run) {
-  if (!prev || prev.status !== "running" || run.status === "running") return;
+  if (!prev || prev.status !== 'running' || run.status === 'running') return;
   const job = prev.job;
   if (REFRESH_AFTER.has(job)) refresh().catch(() => {});
-  if (run.status === "error") {
-    const msg = run.last_error || "Bot gặp lỗi";
+  if (run.status === 'error') {
+    const msg = run.last_error || 'Bot gặp lỗi';
     toast(`${jobLabel(job)} lỗi: ${msg}`, true);
-    notify("Bot lỗi", msg);
+    notify('Bot lỗi', msg);
     return;
   }
-  if (job === "loop") {
-    toast("Vòng lặp đã dừng");
-    notify("Bot đã dừng", "Vòng lặp kết thúc.");
+  if (job === 'loop') {
+    toast('Vòng lặp đã dừng');
+    notify('Bot đã dừng', 'Vòng lặp kết thúc.');
     return;
   }
   if (QUIET_JOBS.has(job)) return;
   const r = run.last_result;
   if (r && r.ok === false) {
-    toast(`${jobLabel(job)} thất bại${r.error ? `: ${r.error}` : ""}`, true);
-  } else if (job === "connect") {
-    toast(`Đã kết nối ${run.serial || ""}`.trim());
+    toast(`${jobLabel(job)} thất bại${r.error ? `: ${r.error}` : ''}`, true);
+  } else if (job === 'connect') {
+    toast(`Đã kết nối ${run.serial || ''}`.trim());
   } else {
     toast(`${jobLabel(job)} xong`);
   }
@@ -943,27 +939,27 @@ function handleTransition(prev, run) {
 
 // ---------------------------------------------------------------- title & notifications
 
-const canNotify = "Notification" in window && window.isSecureContext;
+const canNotify = 'Notification' in window && window.isSecureContext;
 
 function syncNotifyBtn() {
-  $("btn-notify").hidden = !canNotify || Notification.permission !== "default";
+  $('btn-notify').hidden = !canNotify || Notification.permission !== 'default';
 }
 
 function notify(title, body) {
-  if (!canNotify || Notification.permission !== "granted" || !document.hidden) return;
+  if (!canNotify || Notification.permission !== 'granted' || !document.hidden) return;
   try {
-    new Notification(title, { body, tag: "farmbot" });
+    new Notification(title, { body, tag: 'farmbot' });
   } catch (err) {
     /* some browsers only allow notifications from a service worker */
   }
 }
 
-$("btn-notify").addEventListener("click", async () => {
+$('btn-notify').addEventListener('click', async () => {
   try {
     const answer = await Notification.requestPermission();
-    if (answer === "granted") toast("Sẽ báo khi bot lỗi hoặc dừng lúc tab đang ẩn");
+    if (answer === 'granted') toast('Sẽ báo khi bot lỗi hoặc dừng lúc tab đang ẩn');
   } catch (err) {
-    toast("Trình duyệt không cho bật thông báo", true);
+    toast('Trình duyệt không cho bật thông báo', true);
   }
   syncNotifyBtn();
 });
@@ -971,12 +967,12 @@ $("btn-notify").addEventListener("click", async () => {
 // ---------------------------------------------------------------- share
 
 function drawShareQr(url) {
-  const canvas = $("share-qr");
-  if (typeof qrcode !== "function") {
+  const canvas = $('share-qr');
+  if (typeof qrcode !== 'function') {
     canvas.hidden = true;
     return;
   }
-  const qr = qrcode(0, "M");
+  const qr = qrcode(0, 'M');
   qr.addData(url);
   qr.make();
   const count = qr.getModuleCount();
@@ -985,10 +981,10 @@ function drawShareQr(url) {
   const size = cell * (count + quiet * 2);
   canvas.width = size;
   canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#fff";
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, size, size);
-  ctx.fillStyle = "#000";
+  ctx.fillStyle = '#000';
   for (let r = 0; r < count; r++) {
     for (let c = 0; c < count; c++) {
       if (qr.isDark(r, c)) ctx.fillRect((c + quiet) * cell, (r + quiet) * cell, cell, cell);
@@ -1003,13 +999,13 @@ async function copyText(text) {
     return true;
   } catch (err) {
     // Plain-HTTP pages are not a secure context, so the clipboard API can be missing.
-    const box = document.createElement("textarea");
+    const box = document.createElement('textarea');
     box.value = text;
     document.body.appendChild(box);
     box.select();
     let ok = false;
     try {
-      ok = document.execCommand("copy");
+      ok = document.execCommand('copy');
     } catch (e) {
       ok = false;
     }
@@ -1020,94 +1016,77 @@ async function copyText(text) {
 
 async function openShare() {
   try {
-    const info = await api("/api/share");
+    const info = await api('/api/share');
     const urls = info.urls || [];
-    $("share-list").innerHTML = urls
+    $('share-list').innerHTML = urls
       .map(
         (url, i) => `<li>
-        <button type="button" class="share-url${i === 0 ? " active" : ""}" data-share-url="${escapeHtml(url)}">${escapeHtml(url)}</button>
+        <button type="button" class="share-url${i === 0 ? ' active' : ''}" data-share-url="${escapeHtml(url)}">${escapeHtml(url)}</button>
         <button type="button" class="btn btn-compact" data-share-copy="${escapeHtml(url)}">Copy</button>
-      </li>`
+      </li>`,
       )
-      .join("");
-    $("share-note").textContent = info.local_only
-      ? "Server đang chỉ nghe localhost. Chạy web với --host 0.0.0.0 để chia sẻ."
-      : urls.length
-        ? ""
-        : "Không tìm thấy địa chỉ mạng LAN. Kiểm tra kết nối Wi-Fi/LAN của máy tính.";
+      .join('');
+    $('share-note').textContent = info.local_only ? 'Server đang chỉ nghe localhost. Chạy web với --host 0.0.0.0 để chia sẻ.' : urls.length ? '' : 'Không tìm thấy địa chỉ mạng LAN. Kiểm tra kết nối Wi-Fi/LAN của máy tính.';
     if (urls.length) drawShareQr(urls[0]);
-    else $("share-qr").hidden = true;
-    $("share-modal").showModal();
+    else $('share-qr').hidden = true;
+    $('share-modal').showModal();
   } catch (err) {
     toast(err.message, true);
   }
 }
 
-$("btn-share").addEventListener("click", openShare);
-$("share-close").addEventListener("click", () => $("share-modal").close());
-$("share-modal").addEventListener("click", async (ev) => {
-  if (ev.target === $("share-modal")) return $("share-modal").close();
-  const copy = ev.target.closest("[data-share-copy]");
+$('btn-share').addEventListener('click', openShare);
+$('share-close').addEventListener('click', () => $('share-modal').close());
+$('share-modal').addEventListener('click', async (ev) => {
+  if (ev.target === $('share-modal')) return $('share-modal').close();
+  const copy = ev.target.closest('[data-share-copy]');
   if (copy) {
-    toast((await copyText(copy.dataset.shareCopy)) ? "Đã copy link" : "Không copy được, hãy chọn link thủ công", false);
+    toast((await copyText(copy.dataset.shareCopy)) ? 'Đã copy link' : 'Không copy được, hãy chọn link thủ công', false);
     return;
   }
-  const pick = ev.target.closest("[data-share-url]");
+  const pick = ev.target.closest('[data-share-url]');
   if (pick) {
-    document.querySelectorAll("[data-share-url]").forEach((el) => el.classList.toggle("active", el === pick));
+    document.querySelectorAll('[data-share-url]').forEach((el) => el.classList.toggle('active', el === pick));
     drawShareQr(pick.dataset.shareUrl);
   }
 });
 
 function updateTitle() {
   const run = lastRun;
-  let prefix = "";
-  let icon = "🌾";
-  if (run && run.status === "running") {
-    prefix = run.rest_until ? "⏸ " : "▶ ";
-    icon = run.rest_until ? "⏸️" : "▶️";
-  } else if (run && run.status === "error") {
-    prefix = "⚠ ";
-    icon = "⚠️";
+  let prefix = '';
+  let icon = '🌾';
+  if (run && run.status === 'running') {
+    prefix = run.rest_until ? '⏸ ' : '▶ ';
+    icon = run.rest_until ? '⏸️' : '▶️';
+  } else if (run && run.status === 'error') {
+    prefix = '⚠ ';
+    icon = '⚠️';
   }
   document.title = `${prefix}Hay Day Bot — ${PAGE_META[currentPage].title}`;
   const href = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>${icon}</text></svg>`;
-  const link = $("favicon");
-  if (link.getAttribute("href") !== href) link.setAttribute("href", href);
+  const link = $('favicon');
+  if (link.getAttribute('href') !== href) link.setAttribute('href', href);
 }
 
 // ---------------------------------------------------------------- timing
 
 // Loop order, not alphabetical: the table reads like one shop visit.
-const TIMING_ORDER = [
-  "shop",
-  "find_column",
-  "open_newspaper",
-  "next_listing",
-  "visit_shop",
-  "buy_wishlist",
-  "find_slots",
-  "buy_one",
-  "stall_rewind",
-  "stall_pan",
-  "close_shop",
-  "go_home",
-];
+const TIMING_ORDER = ['shop', 'find_column', 'open_newspaper', 'next_listing', 'visit_shop', 'buy_wishlist', 'find_slots', 'buy_one', 'stall_rewind', 'stall_pan', 'close_shop', 'go_home'];
 
 function secs(value) {
   const n = Number(value);
-  if (!Number.isFinite(n) || n === 0) return "0";
-  return n < 10 ? n.toFixed(2).replace(/0$/, "") : n.toFixed(1);
+  if (!Number.isFinite(n) || n === 0) return '0';
+  return n < 10 ? n.toFixed(2).replace(/0$/, '') : n.toFixed(1);
 }
 
 function renderTiming(timing) {
-  const panel = $("timing-panel");
+  const panel = $('timing-panel');
   if (!panel) return;
   const steps = (timing && timing.steps) || {};
   const names = Object.keys(steps);
   if (!names.length) {
     panel.hidden = true;
-    $("timing-head").textContent = "chưa có số đo — chạy vòng báo";
+    $('timing-head').textContent = 'chưa có số đo — chạy vòng báo';
     return;
   }
   panel.hidden = false;
@@ -1118,48 +1097,36 @@ function renderTiming(timing) {
   const shot = timing.shot || {};
   if (shot.n) head.push(`${shot.n} ảnh · ${secs(shot.avg_s)}s/ảnh`);
   if (timing.current) head.push(`đang: ${timing.current}`);
-  $("timing-head").textContent = head.join(" · ");
+  $('timing-head').textContent = head.join(' · ');
 
   const split = timing.split_pct || {};
-  $("timing-split").innerHTML = ["adb", "sleep", "cpu"]
+  $('timing-split').innerHTML = ['adb', 'sleep', 'cpu']
     .map((key) => {
       const pct = Number(split[key]) || 0;
-      const label = key === "adb" ? "ADB" : key === "sleep" ? "Chờ" : "CPU";
-      return `<span class="seg seg-${key}" style="width:${pct}%" title="${label} ${pct}%">${
-        pct >= 12 ? `${label} ${pct}%` : ""
-      }</span>`;
+      const label = key === 'adb' ? 'ADB' : key === 'sleep' ? 'Chờ' : 'CPU';
+      return `<span class="seg seg-${key}" style="width:${pct}%" title="${label} ${pct}%">${pct >= 12 ? `${label} ${pct}%` : ''}</span>`;
     })
-    .join("");
+    .join('');
 
   const safety = timing.safety || {};
   const risky = (safety.verify_fail || 0) + (safety.visit_fail || 0);
-  const safetyEl = $("timing-safety");
-  safetyEl.classList.toggle("warn", risky > 0);
-  safetyEl.textContent = [
-    `mua ${safety.buys || 0}`,
-    `verify fail ${safety.verify_fail || 0}`,
-    `bỏ qua ${safety.buy_skip || 0}`,
-    `vào shop lỗi ${safety.visit_fail || 0}`,
-    `đụng trần ${safety.deadline_hits || 0}`,
-  ].join(" · ");
+  const safetyEl = $('timing-safety');
+  safetyEl.classList.toggle('warn', risky > 0);
+  safetyEl.textContent = [`mua ${safety.buys || 0}`, `verify fail ${safety.verify_fail || 0}`, `bỏ qua ${safety.buy_skip || 0}`, `vào shop lỗi ${safety.visit_fail || 0}`, `đụng trần ${safety.deadline_hits || 0}`].join(' · ');
 
-  const ordered = [
-    ...TIMING_ORDER.filter((name) => steps[name]),
-    ...names.filter((name) => !TIMING_ORDER.includes(name)),
-  ];
-  $("timing-log").innerHTML = ordered
+  const ordered = [...TIMING_ORDER.filter((name) => steps[name]), ...names.filter((name) => !TIMING_ORDER.includes(name))];
+  $('timing-log').innerHTML = ordered
     .map((name) => {
       const s = steps[name];
       const cap = s.deadline_s;
       const hit = (s.deadline_hits || 0) > 0;
       // Finishing well inside the ceiling while still sleeping means the wait
       // can come down; hitting the ceiling means it must go up.
-      const slack =
-        !hit && cap && s.avg_s < cap * 0.6 && s.sleep_s > 0.05;
-      const cls = hit ? "hot" : slack ? "slack" : "";
+      const slack = !hit && cap && s.avg_s < cap * 0.6 && s.sleep_s > 0.05;
+      const cls = hit ? 'hot' : slack ? 'slack' : '';
       return `<tr class="${cls}">
         <td class="step">${escapeHtml(name)}</td>
-        <td>${cap == null ? "—" : `${secs(cap)}s`}</td>
+        <td>${cap == null ? '—' : `${secs(cap)}s`}</td>
         <td>${secs(s.last_s)}</td>
         <td>${secs(s.avg_s)}</td>
         <td>${secs(s.min_s)}–${secs(s.max_s)}</td>
@@ -1171,62 +1138,62 @@ function renderTiming(timing) {
         <td>${s.n}</td>
       </tr>`;
     })
-    .join("");
+    .join('');
 
   const waits = timing.waits || {};
-  $("timing-waits").textContent = Object.keys(waits).length
+  $('timing-waits').textContent = Object.keys(waits).length
     ? `Cấu hình đang dùng — ${Object.entries(waits)
         .map(([key, value]) => `${key} ${value}`)
-        .join(" · ")}`
-    : "";
+        .join(' · ')}`
+    : '';
 }
 
-$("btn-screen-toggle").addEventListener("click", () => {
+$('btn-screen-toggle').addEventListener('click', () => {
   screenOn = !screenOn;
-  localSet("screenOn", screenOn);
+  localSet('screenOn', screenOn);
   applyScreenOn();
 });
 applyScreenOn();
 
-$("log-details").open = Boolean(localGet("logOpen", true));
-$("log-details").addEventListener("toggle", (ev) => {
-  localSet("logOpen", ev.target.open);
-  if (ev.target.open) $("run-log").scrollTop = $("run-log").scrollHeight;
+$('log-details').open = Boolean(localGet('logOpen', true));
+$('log-details').addEventListener('toggle', (ev) => {
+  localSet('logOpen', ev.target.open);
+  if (ev.target.open) $('run-log').scrollTop = $('run-log').scrollHeight;
 });
 function applyLogTall(tall) {
-  $("run-log").classList.toggle("tall", tall);
-  const btn = $("btn-log-expand");
-  btn.textContent = tall ? "⤡ Thu nhỏ" : "⤢ Mở rộng";
-  btn.setAttribute("aria-pressed", String(tall));
-  $("run-log").scrollTop = $("run-log").scrollHeight;
+  $('run-log').classList.toggle('tall', tall);
+  const btn = $('btn-log-expand');
+  btn.textContent = tall ? '⤡ Thu nhỏ' : '⤢ Mở rộng';
+  btn.setAttribute('aria-pressed', String(tall));
+  $('run-log').scrollTop = $('run-log').scrollHeight;
 }
-$("btn-log-expand").addEventListener("click", (ev) => {
+$('btn-log-expand').addEventListener('click', (ev) => {
   // The button lives in the <summary>: do not let the click fold the log.
   ev.preventDefault();
   ev.stopPropagation();
-  const tall = !$("run-log").classList.contains("tall");
-  localSet("logTall", tall);
+  const tall = !$('run-log').classList.contains('tall');
+  localSet('logTall', tall);
   applyLogTall(tall);
-  $("log-details").open = true;
+  $('log-details').open = true;
 });
-applyLogTall(Boolean(localGet("logTall", false)));
+applyLogTall(Boolean(localGet('logTall', false)));
 
-$("prefs-details").open = Boolean(localGet("prefsOpen", false));
-$("prefs-details").addEventListener("toggle", (ev) => localSet("prefsOpen", ev.target.open));
-$("buy-details").open = Boolean(localGet("buyOpen", true));
-$("buy-details").addEventListener("toggle", (ev) => localSet("buyOpen", ev.target.open));
-$("once-details").open = Boolean(localGet("onceOpen", false));
-$("once-details").addEventListener("toggle", (ev) => localSet("onceOpen", ev.target.open));
+$('prefs-details').open = Boolean(localGet('prefsOpen', false));
+$('prefs-details').addEventListener('toggle', (ev) => localSet('prefsOpen', ev.target.open));
+$('buy-details').open = Boolean(localGet('buyOpen', true));
+$('buy-details').addEventListener('toggle', (ev) => localSet('buyOpen', ev.target.open));
+$('once-details').open = Boolean(localGet('onceOpen', false));
+$('once-details').addEventListener('toggle', (ev) => localSet('onceOpen', ev.target.open));
 
-$("timing-details").open = Boolean(localGet("timingOpen", false));
-$("timing-details").addEventListener("toggle", (ev) => localSet("timingOpen", ev.target.open));
+$('timing-details').open = Boolean(localGet('timingOpen', false));
+$('timing-details').addEventListener('toggle', (ev) => localSet('timingOpen', ev.target.open));
 
 // ---------------------------------------------------------------- buy history
 
 let lastWishlistBuys = [];
-let showAllBuys = Boolean(localGet("buyShowAll", false));
-let buyLogKey = "";
-let wishBuyKey = "";
+let showAllBuys = Boolean(localGet('buyShowAll', false));
+let buyLogKey = '';
+let wishBuyKey = '';
 
 function lastActivity(row) {
   return Math.max(ts(row.last_buy_at), ts(row.last_match_at));
@@ -1254,31 +1221,23 @@ function renderBuySummary() {
     }
   }
   sessionBuys = session;
-  $("buy-summary").innerHTML = `Hôm nay: <b>${buysToday}</b> lần mua${
-    qtyToday ? ` (×${qtyToday})` : ""
-  } · <b>${matchesToday}</b> lần khớp`;
+  $('buy-summary').innerHTML = `Hôm nay: <b>${buysToday}</b> lần mua${qtyToday ? ` (×${qtyToday})` : ''} · <b>${matchesToday}</b> lần khớp`;
 }
 
 function buyRow(row) {
-  const src = row.has_image ? templateUrl(row.template) : row.has_news_image ? templateUrl(row.news_template) : "";
+  const src = row.has_image ? templateUrl(row.template) : row.has_news_image ? templateUrl(row.news_template) : '';
   const thumb = src ? `<img src="${escapeHtml(src)}" alt="" />` : `<span class="ph">?</span>`;
   const matches = Number(row.match_count) || 0;
   const buys = Number(row.buy_count) || 0;
   const qtySum = Number(row.qty_sum) || 0;
   const id = escapeHtml(row.id);
-  const matchCell =
-    matches > 0
-      ? `<button type="button" class="buy-count" data-hist="match" data-id="${id}">${matches}</button>`
-      : `<span class="buy-count zero">0</span>`;
-  const buyCell =
-    buys > 0
-      ? `<button type="button" class="buy-count" data-hist="buy" data-id="${id}">${buys}</button>`
-      : `<span class="buy-count zero">0</span>`;
+  const matchCell = matches > 0 ? `<button type="button" class="buy-count" data-hist="match" data-id="${id}">${matches}</button>` : `<span class="buy-count zero">0</span>`;
+  const buyCell = buys > 0 ? `<button type="button" class="buy-count" data-hist="buy" data-id="${id}">${buys}</button>` : `<span class="buy-count zero">0</span>`;
   const lastBuy = ts(row.last_buy_at);
   const lastMatch = ts(row.last_match_at);
-  const when = lastBuy ? `mua ${relTime(lastBuy)}` : lastMatch ? `khớp ${relTime(lastMatch)}` : "";
-  const off = row.enabled === false ? `<span class="tag-off">tắt</span>` : "";
-  return `<tr class="${row.enabled === false ? "off" : ""}">
+  const when = lastBuy ? `mua ${relTime(lastBuy)}` : lastMatch ? `khớp ${relTime(lastMatch)}` : '';
+  const off = row.enabled === false ? `<span class="tag-off">tắt</span>` : '';
+  return `<tr class="${row.enabled === false ? 'off' : ''}">
     <td><div class="item">${thumb}<div class="item-text"><b>${id}</b>${off}<small>${escapeHtml(when)}</small></div></div></td>
     <td>${matchCell}</td>
     <td>${buyCell}</td>
@@ -1299,74 +1258,70 @@ function renderWishlistBuys(rows) {
     const active = rows.filter((row) => row.match_count || row.buy_count).sort((a, b) => lastActivity(b) - lastActivity(a));
     const idle = showAllBuys ? rows.filter((row) => row.enabled !== false && !row.match_count && !row.buy_count) : [];
     const shown = [...active, ...idle];
-    $("buy-log").innerHTML = shown.length
-      ? shown.map(buyRow).join("")
-      : `<tr><td colspan="4" class="muted">${
-          showAllBuys ? "Chưa có item wishlist đang bật" : "Chưa khớp hay mua item nào. Tick “Cả item chưa mua” để xem hết."
-        }</td></tr>`;
+    $('buy-log').innerHTML = shown.length ? shown.map(buyRow).join('') : `<tr><td colspan="4" class="muted">${showAllBuys ? 'Chưa có item wishlist đang bật' : 'Chưa khớp hay mua item nào. Tick “Cả item chưa mua” để xem hết.'}</td></tr>`;
   }
   // Buy counts show on the wishlist cards too.
   const wishKey = JSON.stringify(counts);
   if (wishKey !== wishBuyKey) {
     wishBuyKey = wishKey;
-    if (currentPage === "wishlist") renderWishlist();
+    if (currentPage === 'wishlist') renderWishlist();
   }
 }
 
-$("buy-show-all").checked = showAllBuys;
-$("buy-show-all").addEventListener("change", (ev) => {
+$('buy-show-all').checked = showAllBuys;
+$('buy-show-all').addEventListener('change', (ev) => {
   showAllBuys = ev.target.checked;
-  localSet("buyShowAll", showAllBuys);
+  localSet('buyShowAll', showAllBuys);
   renderWishlistBuys(lastWishlistBuys);
 });
 
 function openBuyHistory(itemId, kind) {
   const row = lastWishlistBuys.find((entry) => entry.id === itemId);
-  const events = row ? (kind === "buy" ? row.buys : row.matches) || [] : [];
+  const events = row ? (kind === 'buy' ? row.buys : row.matches) || [] : [];
   if (!row || !events.length) return;
-  $("buy-history-title").textContent = kind === "buy" ? "Lần mua thành công" : "Lần khớp wishlist";
-  const qtySum = kind === "buy" ? Number(row.qty_sum) || 0 : 0;
-  $("buy-history-item").textContent = qtySum > 0 ? `${row.id} · Tổng ${qtySum}` : row.id;
-  $("buy-history-list").innerHTML = events
+  $('buy-history-title').textContent = kind === 'buy' ? 'Lần mua thành công' : 'Lần khớp wishlist';
+  const qtySum = kind === 'buy' ? Number(row.qty_sum) || 0 : 0;
+  $('buy-history-item').textContent = qtySum > 0 ? `${row.id} · Tổng ${qtySum}` : row.id;
+  $('buy-history-list').innerHTML = events
     .map((ev) => {
       const time = escapeHtml(formatBuyTime(ev.at));
-      const qty = Number(ev.qty) > 0 ? `×${Number(ev.qty)}` : "";
+      const qty = Number(ev.qty) > 0 ? `×${Number(ev.qty)}` : '';
       const label = qty ? `${qty} · ${time}` : time;
-      if (kind === "buy" && ev.image) {
+      if (kind === 'buy' && ev.image) {
         const src = `/api/buy-proofs/${encodeURIComponent(ev.image)}.png`;
         return `<li class="buy-proof"><a href="${escapeHtml(src)}" target="_blank" rel="noopener" title="Mở ảnh gốc"><img src="${escapeHtml(src)}" alt="" /></a><span>${escapeHtml(label)}</span></li>`;
       }
       return `<li>${escapeHtml(label)}</li>`;
     })
-    .join("");
-  $("buy-history-modal").showModal();
+    .join('');
+  $('buy-history-modal').showModal();
 }
 
-$("btn-buy-reset").addEventListener("click", async () => {
+$('btn-buy-reset').addEventListener('click', async () => {
   const total = lastWishlistBuys.reduce((n, row) => n + (row.match_count || 0) + (row.buy_count || 0), 0);
   const ok = await confirmDialog({
-    title: "Xoá lịch sử mua?",
+    title: 'Xoá lịch sử mua?',
     message: `Xoá ${total} lần khớp/mua và mọi ảnh bằng chứng mua. Không hoàn tác được.`,
-    ok: "Xoá lịch sử",
+    ok: 'Xoá lịch sử',
   });
   if (!ok) return;
   try {
-    const state = await api("/api/purchases", { method: "DELETE" });
+    const state = await api('/api/purchases', { method: 'DELETE' });
     if (Array.isArray(state.wishlist_buys)) renderWishlistBuys(state.wishlist_buys);
-    toast("Đã xóa lịch sử mua");
+    toast('Đã xóa lịch sử mua');
   } catch (err) {
     toast(err.message, true);
   }
 });
 
-$("buy-log").addEventListener("click", (ev) => {
-  const btn = ev.target.closest("[data-hist]");
-  if (!btn || !$("buy-log").contains(btn)) return;
+$('buy-log').addEventListener('click', (ev) => {
+  const btn = ev.target.closest('[data-hist]');
+  if (!btn || !$('buy-log').contains(btn)) return;
   openBuyHistory(btn.dataset.id, btn.dataset.hist);
 });
-$("buy-history-close").addEventListener("click", () => $("buy-history-modal").close());
-$("buy-history-modal").addEventListener("click", (ev) => {
-  if (ev.target === $("buy-history-modal")) $("buy-history-modal").close();
+$('buy-history-close').addEventListener('click', () => $('buy-history-modal').close());
+$('buy-history-modal').addEventListener('click', (ev) => {
+  if (ev.target === $('buy-history-modal')) $('buy-history-modal').close();
 });
 
 // ---------------------------------------------------------------- run commands
@@ -1381,12 +1336,12 @@ function runPayload(action, extra) {
 
 async function sendRun(action, extra) {
   try {
-    const state = await api("/api/run", {
-      method: "POST",
+    const state = await api('/api/run', {
+      method: 'POST',
       body: JSON.stringify(runPayload(action, extra)),
     });
     renderRun(state.run);
-    if (action === "loop") toast("Đã bắt đầu vòng lặp");
+    if (action === 'loop') toast('Đã bắt đầu vòng lặp');
     // Fast jobs finish before the next regular poll: look again soon.
     schedulePoll(400);
   } catch (err) {
@@ -1395,34 +1350,34 @@ async function sendRun(action, extra) {
   }
 }
 
-$("btn-start").addEventListener("click", async () => {
+$('btn-start').addEventListener('click', async () => {
   const prefs = currentPrefs();
   if (!(prefs.harvest || prefs.plant || prefs.newspaper)) {
-    toast("Chọn ít nhất một hành vi: Thu hoạch, Trồng hoặc Báo", true);
+    toast('Chọn ít nhất một hành vi: Thu hoạch, Trồng hoặc Báo', true);
     return;
   }
   if (prefsPending) await savePrefs();
-  await sendRun("loop");
+  await sendRun('loop');
 });
 
-$("btn-stop").addEventListener("click", async () => {
+$('btn-stop').addEventListener('click', async () => {
   try {
-    const state = await api("/api/stop", { method: "POST", body: "{}" });
+    const state = await api('/api/stop', { method: 'POST', body: '{}' });
     renderRun(state.run);
-    toast("Đã gửi lệnh dừng — bot dừng sau bước hiện tại");
+    toast('Đã gửi lệnh dừng — bot dừng sau bước hiện tại');
     schedulePoll(400);
   } catch (err) {
     toast(err.message, true);
   }
 });
 
-$("btn-skip-rest").addEventListener("click", async () => {
-  const btn = $("btn-skip-rest");
+$('btn-skip-rest').addEventListener('click', async () => {
+  const btn = $('btn-skip-rest');
   btn.disabled = true;
   try {
-    const state = await api("/api/skip-rest", { method: "POST", body: "{}" });
+    const state = await api('/api/skip-rest', { method: 'POST', body: '{}' });
     renderRun(state.run);
-    toast("Bỏ qua nghỉ — vòng mới bắt đầu");
+    toast('Bỏ qua nghỉ — vòng mới bắt đầu');
     schedulePoll(400);
   } catch (err) {
     toast(err.message, true);
@@ -1433,16 +1388,16 @@ $("btn-skip-rest").addEventListener("click", async () => {
 
 // ---------------------------------------------------------------- clicks
 
-document.body.addEventListener("click", async (ev) => {
-  const runBtn = ev.target.closest("[data-run]");
-  const panBtn = ev.target.closest("[data-pan]");
+document.body.addEventListener('click', async (ev) => {
+  const runBtn = ev.target.closest('[data-run]');
+  const panBtn = ev.target.closest('[data-pan]');
   if (runBtn) {
     ev.preventDefault();
     if (runBtn.dataset.confirm) {
       const ok = await confirmDialog({
         title: runBtn.textContent.trim(),
         message: runBtn.dataset.confirm,
-        ok: runBtn.dataset.confirmOk || "Tiếp tục",
+        ok: runBtn.dataset.confirmOk || 'Tiếp tục',
       });
       if (!ok) return;
     }
@@ -1453,50 +1408,50 @@ document.body.addEventListener("click", async (ev) => {
   }
   if (panBtn) {
     ev.preventDefault();
-    await sendRun("pan", { direction: panBtn.dataset.pan });
+    await sendRun('pan', { direction: panBtn.dataset.pan });
     return;
   }
-  const delCrop = ev.target.closest("[data-del-crop]");
-  const delLib = ev.target.closest("[data-del-lib]");
-  const pickLib = ev.target.closest("[data-pick-lib]");
-  const openPicker = ev.target.closest("[data-open-picker]");
-  const libFilter = ev.target.closest("[data-lib-filter]");
-  const wishFilterBtn = ev.target.closest("[data-wish-filter]");
-  const bulkBtn = ev.target.closest("[data-bulk]");
+  const delCrop = ev.target.closest('[data-del-crop]');
+  const delLib = ev.target.closest('[data-del-lib]');
+  const pickLib = ev.target.closest('[data-pick-lib]');
+  const openPicker = ev.target.closest('[data-open-picker]');
+  const libFilter = ev.target.closest('[data-lib-filter]');
+  const wishFilterBtn = ev.target.closest('[data-wish-filter]');
+  const bulkBtn = ev.target.closest('[data-bulk]');
   try {
     if (delLib) {
       const id = delLib.dataset.delLib;
       const ok = await confirmDialog({
-        title: "Xoá icon khỏi thư viện?",
+        title: 'Xoá icon khỏi thư viện?',
         message: `Xoá ${id}. Vật phẩm đã gán ảnh này vẫn giữ bản sao của nó.`,
       });
       if (!ok) return;
-      render(await api(`/api/library/${encodeURIComponent(id)}`, { method: "DELETE" }));
-      toast("Đã xoá khỏi thư viện");
+      render(await api(`/api/library/${encodeURIComponent(id)}`, { method: 'DELETE' }));
+      toast('Đã xoá khỏi thư viện');
       return;
     }
     if (delCrop) {
       const id = delCrop.dataset.delCrop;
-      const ok = await confirmDialog({ title: "Xoá cây trồng?", message: `Xoá ${id} khỏi danh sách cây trồng.` });
+      const ok = await confirmDialog({ title: 'Xoá cây trồng?', message: `Xoá ${id} khỏi danh sách cây trồng.` });
       if (!ok) return;
-      render(await api(`/api/crops/${encodeURIComponent(id)}`, { method: "DELETE" }));
-      toast("Đã xoá cây trồng");
+      render(await api(`/api/crops/${encodeURIComponent(id)}`, { method: 'DELETE' }));
+      toast('Đã xoá cây trồng');
       return;
     }
     if (libFilter) {
       libraryFilter = libFilter.dataset.libFilter;
-      localSet("libFilter", libraryFilter);
+      localSet('libFilter', libraryFilter);
       renderLibrary(lastState.library || []);
       return;
     }
     if (wishFilterBtn) {
       wishFilter = wishFilterBtn.dataset.wishFilter;
-      localSet("wishFilter", wishFilter);
+      localSet('wishFilter', wishFilter);
       renderWishlist();
       return;
     }
     if (bulkBtn) {
-      await bulkToggle(bulkBtn.dataset.bulk === "on");
+      await bulkToggle(bulkBtn.dataset.bulk === 'on');
       return;
     }
     if (openPicker) {
@@ -1508,8 +1463,8 @@ document.body.addEventListener("click", async (ev) => {
       applyLibraryPick(pickLib.dataset.pickLib);
       return;
     }
-    const itemTile = ev.target.closest("#items .tile");
-    if (itemTile && !ev.target.closest("button, input, label")) {
+    const itemTile = ev.target.closest('#items .tile');
+    if (itemTile && !ev.target.closest('button, input, label')) {
       openItemModal(itemTile);
     }
   } catch (err) {
@@ -1517,9 +1472,9 @@ document.body.addEventListener("click", async (ev) => {
   }
 });
 
-document.body.addEventListener("keydown", (ev) => {
-  if (ev.key !== "Enter" && ev.key !== " ") return;
-  const tile = ev.target.closest("#items .tile, [data-pick-lib]");
+document.body.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  const tile = ev.target.closest('#items .tile, [data-pick-lib]');
   if (!tile || ev.target !== tile) return;
   ev.preventDefault();
   if (tile.dataset.pickLib) applyLibraryPick(tile.dataset.pickLib);
@@ -1529,77 +1484,76 @@ document.body.addEventListener("keydown", (ev) => {
 // ---------------------------------------------------------------- item forms
 
 function slotIds(form, kind) {
-  const edit = form === "edit";
-  const shop = kind === "shop";
+  const edit = form === 'edit';
+  const shop = kind === 'shop';
   return {
-    hidden: $(edit ? (shop ? "item-edit-shop-lib" : "item-edit-news-lib") : shop ? "item-shop-lib" : "item-news-lib"),
-    file: $(edit ? (shop ? "item-edit-file" : "item-edit-news-file") : shop ? "item-file" : "item-news-file"),
-    img: $(edit ? (shop ? "item-edit-preview" : "item-edit-news-preview") : shop ? "item-preview-img" : "item-news-preview-img"),
+    hidden: $(edit ? (shop ? 'item-edit-shop-lib' : 'item-edit-news-lib') : shop ? 'item-shop-lib' : 'item-news-lib'),
+    file: $(edit ? (shop ? 'item-edit-file' : 'item-edit-news-file') : shop ? 'item-file' : 'item-news-file'),
+    img: $(edit ? (shop ? 'item-edit-preview' : 'item-edit-news-preview') : shop ? 'item-preview-img' : 'item-news-preview-img'),
   };
 }
 
 function parsePickerKey(key) {
-  const [form, kind] = String(key || "").split("-");
-  if ((form !== "add" && form !== "edit") || (kind !== "shop" && kind !== "news")) return null;
+  const [form, kind] = String(key || '').split('-');
+  if ((form !== 'add' && form !== 'edit') || (kind !== 'shop' && kind !== 'news')) return null;
   return { form, kind };
 }
 
 function syncItemPreview() {
-  const shop = $("item-file").files[0] || $("item-shop-lib").value;
-  const news = $("item-news-file").files[0] || $("item-news-lib").value;
-  $("item-preview").hidden = !(shop || news);
+  const shop = $('item-file').files[0] || $('item-shop-lib').value;
+  const news = $('item-news-file').files[0] || $('item-news-lib').value;
+  $('item-preview').hidden = !(shop || news);
 }
 
 function applyLibraryPick(id) {
   if (!pickerSlot) return;
   const slot = slotIds(pickerSlot.form, pickerSlot.kind);
   slot.hidden.value = id;
-  slot.file.value = "";
+  slot.file.value = '';
   slot.img.src = libraryUrl(id);
   slot.img.hidden = false;
-  if (pickerSlot.form === "add") syncItemPreview();
-  $("library-picker").close();
+  if (pickerSlot.form === 'add') syncItemPreview();
+  $('library-picker').close();
 }
 
 function renderPickerGrid() {
   if (!pickerSlot) return;
   const rows = (lastState.library || []).filter((row) => row.kind === pickerSlot.kind);
-  $("library-picker-grid").innerHTML = rows.map((row) => libraryCard(row, { pick: true })).join("");
-  $("library-picker-empty").hidden = rows.length > 0;
+  $('library-picker-grid').innerHTML = rows.map((row) => libraryCard(row, { pick: true })).join('');
+  $('library-picker-empty').hidden = rows.length > 0;
 }
 
 async function showLibraryPicker(key) {
   pickerSlot = parsePickerKey(key);
   if (!pickerSlot) return;
-  $("library-picker-file").value = "";
-  $("library-picker-title").textContent =
-    pickerSlot.kind === "news" ? "Chọn ảnh báo từ thư viện" : "Chọn ảnh shop từ thư viện";
-  if (!lastState.library) lastState = { ...lastState, ...(await api("/api/state")) };
+  $('library-picker-file').value = '';
+  $('library-picker-title').textContent = pickerSlot.kind === 'news' ? 'Chọn ảnh báo từ thư viện' : 'Chọn ảnh shop từ thư viện';
+  if (!lastState.library) lastState = { ...lastState, ...(await api('/api/state')) };
   renderPickerGrid();
-  $("library-picker").showModal();
+  $('library-picker').showModal();
 }
 
-$("library-picker-cancel").addEventListener("click", () => $("library-picker").close());
-$("library-picker").addEventListener("click", (ev) => {
-  if (ev.target === $("library-picker")) $("library-picker").close();
+$('library-picker-cancel').addEventListener('click', () => $('library-picker').close());
+$('library-picker').addEventListener('click', (ev) => {
+  if (ev.target === $('library-picker')) $('library-picker').close();
 });
 // Every way out (pick, Huỷ, ✖, Esc, backdrop) ends here.
-$("library-picker").addEventListener("close", () => {
+$('library-picker').addEventListener('close', () => {
   pickerSlot = null;
 });
 
 // The round red ✖ on every popup.
-document.addEventListener("click", (ev) => {
-  const x = ev.target.closest(".modal-x");
-  if (x) x.closest("dialog").close();
+document.addEventListener('click', (ev) => {
+  const x = ev.target.closest('.modal-x');
+  if (x) x.closest('dialog').close();
 });
 
-$("library-picker-file").addEventListener("change", async (ev) => {
+$('library-picker-file').addEventListener('change', async (ev) => {
   const file = ev.target.files[0];
   if (!file || !pickerSlot) return;
   try {
-    const state = await api("/api/library", {
-      method: "POST",
+    const state = await api('/api/library', {
+      method: 'POST',
       body: JSON.stringify({
         kind: pickerSlot.kind,
         image: await fileToDataUrl(file),
@@ -1607,7 +1561,7 @@ $("library-picker-file").addEventListener("change", async (ev) => {
     });
     render(state);
     applyLibraryPick(state.saved.id);
-    toast(state.saved.duplicate ? "Đã có icon giống, dùng lại" : "Đã thêm vào thư viện");
+    toast(state.saved.duplicate ? 'Đã có icon giống, dùng lại' : 'Đã thêm vào thư viện');
   } catch (err) {
     toast(err.message, true);
   }
@@ -1615,9 +1569,9 @@ $("library-picker-file").addEventListener("change", async (ev) => {
 
 async function previewFile(input, img, libInput, onDone) {
   const file = input.files[0];
-  libInput.value = "";
+  libInput.value = '';
   if (!file) {
-    img.removeAttribute("src");
+    img.removeAttribute('src');
     img.hidden = true;
   } else {
     img.src = await fileToDataUrl(file);
@@ -1626,39 +1580,35 @@ async function previewFile(input, img, libInput, onDone) {
   if (onDone) onDone();
 }
 
-$("item-file").addEventListener("change", () =>
-  previewFile($("item-file"), $("item-preview-img"), $("item-shop-lib"), syncItemPreview),
-);
-$("item-news-file").addEventListener("change", () =>
-  previewFile($("item-news-file"), $("item-news-preview-img"), $("item-news-lib"), syncItemPreview),
-);
+$('item-file').addEventListener('change', () => previewFile($('item-file'), $('item-preview-img'), $('item-shop-lib'), syncItemPreview));
+$('item-news-file').addEventListener('change', () => previewFile($('item-news-file'), $('item-news-preview-img'), $('item-news-lib'), syncItemPreview));
 
-$("item-form").addEventListener("submit", async (ev) => {
+$('item-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   try {
-    const shop = $("item-file").files[0];
-    const news = $("item-news-file").files[0];
-    const shopLib = $("item-shop-lib").value;
-    const newsLib = $("item-news-lib").value;
-    if (!shop && !news && !shopLib && !newsLib) throw new Error("Chọn ảnh shop hoặc ảnh báo");
-    const body = { id: $("item-id").value, enabled: true };
+    const shop = $('item-file').files[0];
+    const news = $('item-news-file').files[0];
+    const shopLib = $('item-shop-lib').value;
+    const newsLib = $('item-news-lib').value;
+    if (!shop && !news && !shopLib && !newsLib) throw new Error('Chọn ảnh shop hoặc ảnh báo');
+    const body = { id: $('item-id').value, enabled: true };
     if (shop) body.image = await fileToDataUrl(shop);
     if (news) body.news_image = await fileToDataUrl(news);
     if (shopLib && !shop) body.shop_library = shopLib;
     if (newsLib && !news) body.news_library = newsLib;
-    const state = await api("/api/items", {
-      method: "POST",
+    const state = await api('/api/items', {
+      method: 'POST',
       body: JSON.stringify(body),
     });
-    $("item-form").reset();
-    $("item-shop-lib").value = "";
-    $("item-news-lib").value = "";
-    $("item-preview").hidden = true;
-    $("item-preview-img").hidden = true;
-    $("item-news-preview-img").hidden = true;
+    $('item-form').reset();
+    $('item-shop-lib').value = '';
+    $('item-news-lib').value = '';
+    $('item-preview').hidden = true;
+    $('item-preview-img').hidden = true;
+    $('item-news-preview-img').hidden = true;
     imgVersion = Date.now();
     render(state);
-    toast(`Đã lưu ${state.item ? state.item.id : "item"}`);
+    toast(`Đã lưu ${state.item ? state.item.id : 'item'}`);
   } catch (err) {
     toast(err.message, true);
   }
@@ -1666,53 +1616,53 @@ $("item-form").addEventListener("submit", async (ev) => {
 
 function openItemModal(tile) {
   const id = tile.dataset.id;
-  $("item-edit-old").value = id;
-  $("item-edit-id").value = id;
-  $("item-edit-file").value = "";
-  $("item-edit-news-file").value = "";
-  $("item-edit-shop-lib").value = "";
-  $("item-edit-news-lib").value = "";
-  const shop = $("item-edit-preview");
-  const news = $("item-edit-news-preview");
+  $('item-edit-old').value = id;
+  $('item-edit-id').value = id;
+  $('item-edit-file').value = '';
+  $('item-edit-news-file').value = '';
+  $('item-edit-shop-lib').value = '';
+  $('item-edit-news-lib').value = '';
+  const shop = $('item-edit-preview');
+  const news = $('item-edit-news-preview');
   if (tile.dataset.hasImage) {
     shop.src = templateUrl(tile.dataset.template);
     shop.hidden = false;
   } else {
-    shop.removeAttribute("src");
+    shop.removeAttribute('src');
     shop.hidden = true;
   }
   if (tile.dataset.hasNews) {
     news.src = templateUrl(tile.dataset.newsTemplate);
     news.hidden = false;
   } else {
-    news.removeAttribute("src");
+    news.removeAttribute('src');
     news.hidden = true;
   }
-  $("item-modal").showModal();
+  $('item-modal').showModal();
 }
 
-$("item-edit-cancel").addEventListener("click", () => $("item-modal").close());
-$("item-modal").addEventListener("click", (ev) => {
-  if (ev.target === $("item-modal")) $("item-modal").close();
+$('item-edit-cancel').addEventListener('click', () => $('item-modal').close());
+$('item-modal').addEventListener('click', (ev) => {
+  if (ev.target === $('item-modal')) $('item-modal').close();
 });
 
-$("item-edit-file").addEventListener("change", () => {
-  if ($("item-edit-file").files[0]) previewFile($("item-edit-file"), $("item-edit-preview"), $("item-edit-shop-lib"));
+$('item-edit-file').addEventListener('change', () => {
+  if ($('item-edit-file').files[0]) previewFile($('item-edit-file'), $('item-edit-preview'), $('item-edit-shop-lib'));
 });
-$("item-edit-news-file").addEventListener("change", () => {
-  if ($("item-edit-news-file").files[0]) previewFile($("item-edit-news-file"), $("item-edit-news-preview"), $("item-edit-news-lib"));
+$('item-edit-news-file').addEventListener('change', () => {
+  if ($('item-edit-news-file').files[0]) previewFile($('item-edit-news-file'), $('item-edit-news-preview'), $('item-edit-news-lib'));
 });
 
-$("item-edit-delete").addEventListener("click", async () => {
-  const id = $("item-edit-old").value;
+$('item-edit-delete').addEventListener('click', async () => {
+  const id = $('item-edit-old').value;
   const ok = await confirmDialog({
-    title: "Xoá vật phẩm?",
+    title: 'Xoá vật phẩm?',
     message: `Xoá ${id} khỏi wishlist cùng 2 ảnh template của nó. Ảnh trong thư viện vẫn giữ.`,
   });
   if (!ok) return;
   try {
-    const state = await api(`/api/items/${encodeURIComponent(id)}`, { method: "DELETE" });
-    $("item-modal").close();
+    const state = await api(`/api/items/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    $('item-modal').close();
     render(state);
     toast(`Đã xoá ${id}`);
   } catch (err) {
@@ -1720,108 +1670,173 @@ $("item-edit-delete").addEventListener("click", async () => {
   }
 });
 
-$("item-edit-form").addEventListener("submit", async (ev) => {
+$('item-edit-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   try {
-    const oldId = $("item-edit-old").value;
-    const body = { id: $("item-edit-id").value };
-    const shop = $("item-edit-file").files[0];
-    const news = $("item-edit-news-file").files[0];
-    const shopLib = $("item-edit-shop-lib").value;
-    const newsLib = $("item-edit-news-lib").value;
+    const oldId = $('item-edit-old').value;
+    const body = { id: $('item-edit-id').value };
+    const shop = $('item-edit-file').files[0];
+    const news = $('item-edit-news-file').files[0];
+    const shopLib = $('item-edit-shop-lib').value;
+    const newsLib = $('item-edit-news-lib').value;
     if (shop) body.image = await fileToDataUrl(shop);
     if (news) body.news_image = await fileToDataUrl(news);
     if (shopLib && !shop) body.shop_library = shopLib;
     if (newsLib && !news) body.news_library = newsLib;
     const state = await api(`/api/items/${encodeURIComponent(oldId)}`, {
-      method: "PATCH",
+      method: 'PATCH',
       body: JSON.stringify(body),
     });
-    $("item-modal").close();
+    $('item-modal').close();
     imgVersion = Date.now();
     render(state);
-    toast("Đã cập nhật vật phẩm");
+    toast('Đã cập nhật vật phẩm');
   } catch (err) {
     toast(err.message, true);
   }
 });
 
-$("library-form").addEventListener("submit", async (ev) => {
+$('library-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   try {
-    const file = $("library-file").files[0];
-    if (!file) throw new Error("Chọn ảnh PNG");
-    const state = await api("/api/library", {
-      method: "POST",
+    const file = $('library-file').files[0];
+    if (!file) throw new Error('Chọn ảnh PNG');
+    const state = await api('/api/library', {
+      method: 'POST',
       body: JSON.stringify({
-        kind: $("library-kind").value,
+        kind: $('library-kind').value,
         image: await fileToDataUrl(file),
       }),
     });
-    $("library-form").reset();
-    toast(state.saved.duplicate ? "Đã có icon giống, không thêm trùng" : "Đã thêm vào thư viện");
+    $('library-form').reset();
+    toast(state.saved.duplicate ? 'Đã có icon giống, không thêm trùng' : 'Đã thêm vào thư viện');
     render(state);
   } catch (err) {
     toast(err.message, true);
   }
 });
 
-$("crop-form").addEventListener("submit", async (ev) => {
+$('crop-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   try {
-    const file = $("crop-file").files[0];
+    const file = $('crop-file').files[0];
     const body = {
-      id: $("crop-id").value,
-      storage: $("crop-storage").value,
+      id: $('crop-id').value,
+      storage: $('crop-storage').value,
     };
     if (file) body.image = await fileToDataUrl(file);
-    const state = await api("/api/crops", { method: "POST", body: JSON.stringify(body) });
-    $("crop-form").reset();
+    const state = await api('/api/crops', { method: 'POST', body: JSON.stringify(body) });
+    $('crop-form').reset();
     imgVersion = Date.now();
     render(state);
-    toast("Đã lưu cây trồng");
+    toast('Đã lưu cây trồng');
   } catch (err) {
     toast(err.message, true);
   }
 });
 
-$("config-form").addEventListener("submit", async (ev) => {
+// Set by the "Xoá token" button for the one save that follows it.
+let clearTelegramToken = false;
+
+async function saveConfig() {
+  const port = $('adb_port').value;
+  const token = $('telegram_token').value.trim();
+  await api('/api/config', {
+    method: 'PUT',
+    body: JSON.stringify({
+      adb_host: $('adb_host').value,
+      adb_port: port === '' ? null : Number(port),
+      adb_bin: $('adb_bin').value,
+      package: $('package').value,
+      template_threshold: Number($('template_threshold').value),
+      buy_threshold: Number($('buy_threshold').value),
+      news_threshold: Number($('news_threshold').value),
+      action_wait_s: Number($('action_wait_s').value),
+      buy_wait_s: Number($('buy_wait_s').value),
+      visit_wait_s: Number($('visit_wait_s').value),
+      poll_interval_s: Number($('poll_interval_s').value),
+      stall_swipe_ms: Number($('stall_swipe_ms').value),
+      swipe_duration_ms: Number($('swipe_duration_ms').value),
+      debug: $('debug').checked,
+      // Sent only when typed: the page never holds the saved token.
+      ...(token ? { telegram_token: token } : {}),
+      ...(clearTelegramToken ? { telegram_token_clear: true } : {}),
+      telegram_chat_id: $('telegram_chat_id').value.trim(),
+      telegram_buys: $('telegram_buys').checked,
+    }),
+  });
+  clearTelegramToken = false;
+  $('telegram_token').value = '';
+  setConfigDirty(false);
+  await refresh();
+}
+
+$('config-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   try {
-    const port = $("adb_port").value;
-    await api("/api/config", {
-      method: "PUT",
-      body: JSON.stringify({
-        adb_host: $("adb_host").value,
-        adb_port: port === "" ? null : Number(port),
-        adb_bin: $("adb_bin").value,
-        package: $("package").value,
-        template_threshold: Number($("template_threshold").value),
-        buy_threshold: Number($("buy_threshold").value),
-        news_threshold: Number($("news_threshold").value),
-        action_wait_s: Number($("action_wait_s").value),
-        buy_wait_s: Number($("buy_wait_s").value),
-        visit_wait_s: Number($("visit_wait_s").value),
-        poll_interval_s: Number($("poll_interval_s").value),
-        stall_swipe_ms: Number($("stall_swipe_ms").value),
-        swipe_duration_ms: Number($("swipe_duration_ms").value),
-        debug: $("debug").checked,
-      }),
-    });
-    setConfigDirty(false);
-    toast("Đã lưu cấu hình");
-    await refresh();
+    await saveConfig();
+    toast('Đã lưu cấu hình');
+  } catch (err) {
+    clearTelegramToken = false;
+    toast(err.message, true);
+  }
+});
+
+// The Telegram buttons use what is saved on the server, so a token or chat ID
+// typed a moment ago is saved first.
+async function telegramCall(button, path) {
+  button.disabled = true;
+  try {
+    if (configDirty) await saveConfig();
+    return await api(path, { method: 'POST', body: '{}' });
+  } finally {
+    button.disabled = false;
+  }
+}
+
+$('btn-telegram-chat').addEventListener('click', async (ev) => {
+  try {
+    const res = await telegramCall(ev.currentTarget, '/api/telegram/chat');
+    $('telegram_chat_id').value = res.chat_id;
+    fillConfig(res.config, true);
+    toast(`Đã lấy chat ID ${res.chat_id}`);
   } catch (err) {
     toast(err.message, true);
   }
 });
 
-document.body.addEventListener("change", async (ev) => {
-  const toggle = ev.target.closest("[data-toggle]");
+$('btn-telegram-test').addEventListener('click', async (ev) => {
+  try {
+    await telegramCall(ev.currentTarget, '/api/telegram/test');
+    toast('Đã gửi tin thử — xem Telegram trên điện thoại');
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+$('btn-telegram-clear').addEventListener('click', async () => {
+  const ok = await confirmDialog({
+    title: 'Xoá token Telegram?',
+    message: 'Bot sẽ ngừng báo qua Telegram cho tới khi dán token mới.',
+    ok: 'Xoá token',
+  });
+  if (!ok) return;
+  clearTelegramToken = true;
+  try {
+    await saveConfig();
+    toast('Đã xoá token Telegram');
+  } catch (err) {
+    clearTelegramToken = false;
+    toast(err.message, true);
+  }
+});
+
+document.body.addEventListener('change', async (ev) => {
+  const toggle = ev.target.closest('[data-toggle]');
   if (!toggle) return;
   try {
     const state = await api(`/api/items/${encodeURIComponent(toggle.dataset.toggle)}`, {
-      method: "PATCH",
+      method: 'PATCH',
       body: JSON.stringify({ enabled: toggle.checked }),
     });
     render(state);

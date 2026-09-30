@@ -90,6 +90,15 @@ body {
   min-height: 100%;
   overflow-x: hidden;
 }
+/* overflow-x: hidden on both html and body turns body into a scroll container,
+   which stops position: sticky from following the window. clip cuts the same
+   overflow without one. */
+@supports (overflow: clip) {
+  html,
+  body {
+    overflow-x: clip;
+  }
+}
 body {
   font-family: var(--font);
   font-weight: 500;
@@ -430,6 +439,17 @@ body.has-live .live-panel {
 }
 .page.active {
   display: block;
+}
+/* Two-column desktop layout: the controls stay in view under the nav while
+   the long left column (log, history) scrolls. --nav-h is set from the nav's
+   real height in app.js. A card taller than the window scrolls inside itself. */
+@media (min-width: 901px) {
+  body.has-live .page[data-page='control'].active {
+    position: sticky;
+    top: calc(var(--nav-h, 64px) + 12px);
+    max-height: calc(100vh - var(--nav-h, 64px) - 24px);
+    overflow-y: auto;
+  }
 }
 
 /* Yellow game popup: bright rim, darker lip underneath. */
@@ -1125,6 +1145,14 @@ input[type='radio'] {
   font-weight: 800;
   color: #fff;
   text-shadow: var(--game-text-sm);
+}
+/* The setup steps run across both columns of the Telegram group. */
+.telegram-help {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.telegram-fieldset .row {
+  align-self: center;
 }
 
 /* ------------------------------------------------------------ folds */
