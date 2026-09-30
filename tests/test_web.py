@@ -364,7 +364,7 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     assert b"stall_swipe_ms" in page
     assert b"timing-log" in page
     assert b"timing-safety" in page
-    assert "Thời gian vòng shop".encode("utf-8") in page
+    assert "Đo lường".encode("utf-8") in page
     assert b"viewport-fit=cover" in page
     code, css = _request(f"{httpd}/static/style.css")
     assert code == 200
