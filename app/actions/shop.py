@@ -11,6 +11,7 @@ from app.actions.timing import LoopTiming
 from app.config import SCREENSHOT_DIR, AppConfig
 from app.controller.camera import CameraManager
 from app.controller.device import DeviceController, frame_png_bytes
+from app.notify import notify_buys
 from app.storage.botdata import (
     active_wishlist,
     clear_column,
@@ -821,6 +822,10 @@ class NewspaperActions:
         pending, self._pending_buys = self._pending_buys, []
         for item, kind, image, qty in pending:
             record_purchase(item, kind=kind, image=image, qty=qty)
+        # One push per shop visit, whatever it bought; sent in the background.
+        buys = [(item, qty, image) for item, kind, image, qty in pending if kind == "buy"]
+        if buys:
+            notify_buys(self.config, buys)
 
     def _buy_loop(self, should_stop=None, max_buys: int | None = None) -> ActionResult:
         if not self._templates_loaded:

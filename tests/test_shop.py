@@ -1171,6 +1171,28 @@ def test_buy_wishlist_defers_purchase_writes(tmp_path, no_sleep, monkeypatch):
     assert writes == [("wheat", "match"), ("wheat", "buy")]
 
 
+def test_one_notification_per_shop_visit(monkeypatch, no_sleep):
+    """Everything one visit bought goes out as one message; a visit that only
+    matched sends nothing."""
+    pushes: list[list] = []
+    monkeypatch.setattr("app.actions.shop.notify_buys", lambda cfg, buys: pushes.append(buys))
+    monkeypatch.setattr("app.actions.shop.record_purchase", lambda *a, **k: None)
+    actions = NewspaperActions(FakeDevice([]), AppConfig(debug=False), wait_s=0)
+
+    actions._pending_buys = [
+        ("so_do", "match", None, None),
+        ("so_do", "buy", b"proof1", 4),
+        ("pho_mai", "match", None, None),
+        ("pho_mai", "buy", b"proof2", 2),
+    ]
+    actions._flush_buys()
+    assert pushes == [[("so_do", 4, b"proof1"), ("pho_mai", 2, b"proof2")]]
+
+    actions._pending_buys = [("so_do", "match", None, None)]
+    actions._flush_buys()
+    assert len(pushes) == 1
+
+
 def test_buy_missing_item_template_fails(tmp_path, no_sleep, monkeypatch):
     monkeypatch.setattr(
         "app.actions.shop.active_wishlist",

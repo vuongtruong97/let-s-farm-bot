@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from app.config import AppConfig, load_config, save_config
+from app.notify import TelegramError, detect_chat_id, send_test
 from app.storage import botdata
 from app.web.runtime import BusyError, RUNTIME
 
@@ -160,6 +161,36 @@ class BotWebHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/skip-rest":
             self._send_json(200, {"run": RUNTIME.skip_rest()})
+            return
+        if parsed.path == "/api/telegram/test":
+            try:
+                send_test(load_config())
+            except TelegramError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            self._send_json(200, {"ok": True})
+            return
+        if parsed.path == "/api/telegram/chat":
+            cfg = load_config()
+            try:
+                if not cfg.telegram_token:
+                    raise TelegramError("Chưa có token Telegram — dán token rồi bấm Lưu cấu hình")
+                chat = detect_chat_id(cfg.telegram_token)
+            except TelegramError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            if not chat:
+                self._send_json(
+                    400,
+                    {
+                        "error": "Bot chưa nhận tin nhắn nào — mở bot trên Telegram, "
+                        "bấm Start (hoặc gửi một tin bất kỳ) rồi bấm lại"
+                    },
+                )
+                return
+            cfg.telegram_chat_id = chat
+            save_config(cfg)
+            self._send_json(200, {"chat_id": chat, "config": _config_dict(cfg)})
             return
         if parsed.path == "/api/run":
             try:
@@ -348,7 +379,21 @@ def _config_dict(config: AppConfig | None = None) -> dict:
         "poll_interval_s": cfg.poll_interval_s,
         "stall_swipe_ms": cfg.stall_swipe_ms,
         "screencap_raw": cfg.screencap_raw,
+        # Never the token itself: the page has no password and anyone on the
+        # Wi-Fi can open it. A hint is enough to tell which one is saved.
+        "telegram_token_set": bool(cfg.telegram_token),
+        "telegram_token_hint": cfg.telegram_token[-4:] if cfg.telegram_token else "",
+        "telegram_chat_id": cfg.telegram_chat_id,
+        "telegram_buys": cfg.telegram_buys,
     }
+
+
+def _telegram_token(payload: dict, current: AppConfig) -> str:
+    """A blank token field keeps the saved one (the page never holds it)."""
+    if payload.get("telegram_token_clear"):
+        return ""
+    token = str(payload.get("telegram_token") or "").strip()
+    return token or current.telegram_token
 
 
 def _save_config(payload: dict) -> dict:
@@ -408,6 +453,9 @@ def _save_config(payload: dict) -> dict:
         poll_interval_s=poll_interval_s,
         stall_swipe_ms=stall_swipe_ms,
         screencap_raw=bool(payload.get("screencap_raw", current.screencap_raw)),
+        telegram_token=_telegram_token(payload, current),
+        telegram_chat_id=str(payload.get("telegram_chat_id", current.telegram_chat_id) or "").strip(),
+        telegram_buys=bool(payload.get("telegram_buys", current.telegram_buys)),
     )
     save_config(updated)
     return _config_dict(updated)

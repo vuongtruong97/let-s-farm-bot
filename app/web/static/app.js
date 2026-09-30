@@ -282,6 +282,14 @@ function fillConfig(cfg, force = false) {
   $('stall_swipe_ms').value = cfg.stall_swipe_ms ?? 280;
   $('swipe_duration_ms').value = cfg.swipe_duration_ms;
   $('debug').checked = Boolean(cfg.debug);
+  // The token itself never reaches the page; show which one is saved.
+  $('telegram_token').value = '';
+  $('telegram_token').placeholder = cfg.telegram_token_set
+    ? `Đã lưu …${cfg.telegram_token_hint} — để trống để giữ`
+    : '123456789:AAF…';
+  $('btn-telegram-clear').hidden = !cfg.telegram_token_set;
+  $('telegram_chat_id').value = cfg.telegram_chat_id || '';
+  $('telegram_buys').checked = cfg.telegram_buys !== false;
   setConfigDirty(false);
 }
 
@@ -1727,33 +1735,98 @@ $('crop-form').addEventListener('submit', async (ev) => {
   }
 });
 
+// Set by the "Xoá token" button for the one save that follows it.
+let clearTelegramToken = false;
+
+async function saveConfig() {
+  const port = $('adb_port').value;
+  const token = $('telegram_token').value.trim();
+  await api('/api/config', {
+    method: 'PUT',
+    body: JSON.stringify({
+      adb_host: $('adb_host').value,
+      adb_port: port === '' ? null : Number(port),
+      adb_bin: $('adb_bin').value,
+      package: $('package').value,
+      template_threshold: Number($('template_threshold').value),
+      buy_threshold: Number($('buy_threshold').value),
+      news_threshold: Number($('news_threshold').value),
+      action_wait_s: Number($('action_wait_s').value),
+      buy_wait_s: Number($('buy_wait_s').value),
+      visit_wait_s: Number($('visit_wait_s').value),
+      poll_interval_s: Number($('poll_interval_s').value),
+      stall_swipe_ms: Number($('stall_swipe_ms').value),
+      swipe_duration_ms: Number($('swipe_duration_ms').value),
+      debug: $('debug').checked,
+      // Sent only when typed: the page never holds the saved token.
+      ...(token ? { telegram_token: token } : {}),
+      ...(clearTelegramToken ? { telegram_token_clear: true } : {}),
+      telegram_chat_id: $('telegram_chat_id').value.trim(),
+      telegram_buys: $('telegram_buys').checked,
+    }),
+  });
+  clearTelegramToken = false;
+  $('telegram_token').value = '';
+  setConfigDirty(false);
+  await refresh();
+}
+
 $('config-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   try {
-    const port = $('adb_port').value;
-    await api('/api/config', {
-      method: 'PUT',
-      body: JSON.stringify({
-        adb_host: $('adb_host').value,
-        adb_port: port === '' ? null : Number(port),
-        adb_bin: $('adb_bin').value,
-        package: $('package').value,
-        template_threshold: Number($('template_threshold').value),
-        buy_threshold: Number($('buy_threshold').value),
-        news_threshold: Number($('news_threshold').value),
-        action_wait_s: Number($('action_wait_s').value),
-        buy_wait_s: Number($('buy_wait_s').value),
-        visit_wait_s: Number($('visit_wait_s').value),
-        poll_interval_s: Number($('poll_interval_s').value),
-        stall_swipe_ms: Number($('stall_swipe_ms').value),
-        swipe_duration_ms: Number($('swipe_duration_ms').value),
-        debug: $('debug').checked,
-      }),
-    });
-    setConfigDirty(false);
+    await saveConfig();
     toast('Đã lưu cấu hình');
-    await refresh();
   } catch (err) {
+    clearTelegramToken = false;
+    toast(err.message, true);
+  }
+});
+
+// The Telegram buttons use what is saved on the server, so a token or chat ID
+// typed a moment ago is saved first.
+async function telegramCall(button, path) {
+  button.disabled = true;
+  try {
+    if (configDirty) await saveConfig();
+    return await api(path, { method: 'POST', body: '{}' });
+  } finally {
+    button.disabled = false;
+  }
+}
+
+$('btn-telegram-chat').addEventListener('click', async (ev) => {
+  try {
+    const res = await telegramCall(ev.currentTarget, '/api/telegram/chat');
+    $('telegram_chat_id').value = res.chat_id;
+    fillConfig(res.config, true);
+    toast(`Đã lấy chat ID ${res.chat_id}`);
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+$('btn-telegram-test').addEventListener('click', async (ev) => {
+  try {
+    await telegramCall(ev.currentTarget, '/api/telegram/test');
+    toast('Đã gửi tin thử — xem Telegram trên điện thoại');
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+$('btn-telegram-clear').addEventListener('click', async () => {
+  const ok = await confirmDialog({
+    title: 'Xoá token Telegram?',
+    message: 'Bot sẽ ngừng báo qua Telegram cho tới khi dán token mới.',
+    ok: 'Xoá token',
+  });
+  if (!ok) return;
+  clearTelegramToken = true;
+  try {
+    await saveConfig();
+    toast('Đã xoá token Telegram');
+  } catch (err) {
+    clearTelegramToken = false;
     toast(err.message, true);
   }
 });

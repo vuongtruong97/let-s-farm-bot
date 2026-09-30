@@ -1146,6 +1146,14 @@ input[type='radio'] {
   color: #fff;
   text-shadow: var(--game-text-sm);
 }
+/* The setup steps run across both columns of the Telegram group. */
+.telegram-help {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.telegram-fieldset .row {
+  align-self: center;
+}
 
 /* ------------------------------------------------------------ folds */
 

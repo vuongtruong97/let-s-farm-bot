@@ -33,6 +33,11 @@ class AppConfig:
     stall_swipe_ms: int = 280
     # Raw screencap skips PNG encode/decode; set false if an emulator mangles it.
     screencap_raw: bool = True
+    # Telegram push after each shop visit that bought something. The token is a
+    # secret: data/config.json is git-ignored and the web never echoes it.
+    telegram_token: str = ""
+    telegram_chat_id: str = ""
+    telegram_buys: bool = True
 
     def screenshot_dir(self) -> Path:
         SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -79,6 +84,9 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
         "poll_interval_s": config.poll_interval_s,
         "stall_swipe_ms": config.stall_swipe_ms,
         "screencap_raw": config.screencap_raw,
+        "telegram_token": config.telegram_token,
+        "telegram_chat_id": config.telegram_chat_id,
+        "telegram_buys": config.telegram_buys,
     }
     target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return target
