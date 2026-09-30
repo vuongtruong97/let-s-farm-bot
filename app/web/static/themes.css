@@ -1,0 +1,297 @@
+/* Alternative looks, chosen from the header. The default "Nông trại" look is
+   the :root palette in style.css; each block here only re-points its
+   variables. Add a look by adding a block and one entry to THEMES in app.js. */
+
+/* ------------------------------------------------------------ pastel pink
+   Palette: pink #F599C6, butter #FFEA88, mint #7DCCAD, slate blue #4D6787.
+   Slate blue carries all the text and every text outline (white labels get a
+   slate outline, dark text sits on light tints), which is what keeps the
+   pastel fills readable. */
+
+html[data-theme='pastel'] {
+  --grass-1: #fff0f7;
+  --grass-2: #fbcfe3;
+  --grass-3: #f599c6;
+  --panel: #ffea88;
+  --panel-hi: #fff4b8;
+  /* A pink rim ties the butter panels to the pink page; mustard read muddy. */
+  --panel-rim: #f6b3d1;
+  --panel-edge: #e58ab5;
+  --cream: #fff7fb;
+  --cream-2: #ffeaf3;
+  --cream-line: #f3bfd8;
+  --wood-1: #7d97b5;
+  --wood-2: #4d6787;
+  --wood-3: #3f5673;
+  --wood-dark: #2f425c;
+  --crate-1: #fff3b8;
+  --crate-2: #ffea88;
+  --crate-edge: #d4b73a;
+  --orange-1: #ffc2dd;
+  --orange-2: #f599c6;
+  --orange-edge: #c25c93;
+  --green-1: #b4ead4;
+  --green-2: #7dccad;
+  --green-edge: #3f9c7c;
+  --red-1: #ff9db4;
+  --red-2: #ee6f93;
+  --red-edge: #b23a63;
+  --lime: #7dccad;
+  --lime-edge: #4aa686;
+  --grey-1: #e6ebf1;
+  --grey-2: #c5cfdb;
+  --grey-edge: #8797ab;
+  --hud: rgba(77, 103, 135, 0.9);
+  --ink: #4d6787;
+  --ink-soft: #4d6787;
+  --outline: #4d6787;
+  --game-text: 0 2px 0 var(--outline), 0 -1.5px 0 var(--outline), 1.5px 0 0 var(--outline), -1.5px 0 0 var(--outline),
+    1.5px 1.5px 0 var(--outline), -1.5px 1.5px 0 var(--outline), 1.5px -1.5px 0 var(--outline), -1.5px -1.5px 0 var(--outline),
+    0 3px 2px rgba(47, 66, 92, 0.25);
+  --game-text-sm: 0 1.5px 0 var(--outline), 0 -1px 0 var(--outline), 1px 0 0 var(--outline), -1px 0 0 var(--outline),
+    1px 1px 0 var(--outline), -1px 1px 0 var(--outline), 1px -1px 0 var(--outline), -1px -1px 0 var(--outline);
+  --shadow: 0 10px 0 rgba(77, 103, 135, 0.16), 0 18px 34px rgba(77, 103, 135, 0.28);
+  --shadow-sm: 0 4px 0 rgba(77, 103, 135, 0.16);
+  --inset: inset 0 3px 0 rgba(77, 103, 135, 0.1);
+  --focus: 0 0 0 3px #fff, 0 0 0 6px #4d6787;
+  --leaf: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 40'><path d='M60 34C44 38 16 34 4 8c16 2 38 4 56 26z' fill='%237dccad' stroke='%233f9c7c' stroke-width='3'/><path d='M58 32C42 24 26 18 10 12' fill='none' stroke='%233f9c7c' stroke-width='2.5'/><path d='M40 36C30 32 18 30 8 22c10-6 24-4 32 14z' fill='%23b4ead4' stroke='%233f9c7c' stroke-width='2.5'/></svg>");
+}
+
+/* Soft pink sky with butter and white confetti instead of grass tufts. */
+html[data-theme='pastel'] body {
+  background: radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.6) 0 2px, transparent 3px) 0 0 / 46px 46px,
+    radial-gradient(circle at 70% 65%, rgba(255, 234, 136, 0.7) 0 3px, transparent 4px) 0 0 / 38px 38px,
+    radial-gradient(1200px 600px at 50% -10%, var(--grass-1) 0%, transparent 70%), linear-gradient(180deg, var(--grass-2) 0%, var(--grass-3) 100%);
+  background-attachment: fixed;
+}
+
+/* Buttons: every button reads its colours from --b-*, set per selector in
+   style.css, so the pastel palette re-sets them on the same selectors.
+   White label, slate outline: the same recipe as the game's own buttons. */
+html[data-theme='pastel'] .btn,
+html[data-theme='pastel'] .file-btn,
+html[data-theme='pastel'] .chip,
+html[data-theme='pastel'] .nav a,
+html[data-theme='pastel'] .pill-btn,
+html[data-theme='pastel'] .modal-x,
+html[data-theme='pastel'] .fold > summary::before {
+  --b-rim-hi: #ffd3e8;
+  --b-rim-mid: #f599c6;
+  --b-rim-lo: #b8508a;
+  --b-face-top: #ee7fb6;
+  --b-face: #f599c6;
+  --b-glow: #fbc4de;
+  --b-ink: #3f5673;
+  --b-drop: 0 3px 0 rgba(77, 103, 135, 0.3), 0 6px 10px rgba(77, 103, 135, 0.22);
+}
+html[data-theme='pastel'] .btn.primary,
+html[data-theme='pastel'] .nav a.active,
+html[data-theme='pastel'] .chip.active {
+  --b-rim-hi: #c9f2e1;
+  --b-rim-mid: #7dccad;
+  --b-rim-lo: #3f9c7c;
+  --b-face-top: #5fbb98;
+  --b-face: #7dccad;
+  --b-glow: #a9e4cd;
+  --b-ink: #3f5673;
+}
+/* Labels: dark slate ink with a thin white emboss. A white label with a slate
+   outline measured only 1.2-2.9:1 on these light faces (the outline itself
+   3.7-4.0:1); ink reaches 4.8-8.1:1 on every stop of the pink, mint and grey
+   gradients. */
+html[data-theme='pastel'] .btn,
+html[data-theme='pastel'] .file-btn,
+html[data-theme='pastel'] .chip,
+html[data-theme='pastel'] .nav a,
+html[data-theme='pastel'] .pill-btn,
+html[data-theme='pastel'] .fold > summary::before {
+  color: #26374d;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+/* Delete and close stay loud: a deep berry face that carries a white label
+   (5.1-5.9:1). */
+html[data-theme='pastel'] .btn.danger,
+html[data-theme='pastel'] .btn.danger.solid,
+html[data-theme='pastel'] .modal-x {
+  --b-rim-hi: #f58aab;
+  --b-rim-mid: #d9537f;
+  --b-rim-lo: #8e2448;
+  --b-face-top: #b92c57;
+  --b-face: #c73561;
+  --b-glow: #d9537f;
+  --b-ink: #5a1a33;
+}
+html[data-theme='pastel'] .btn.danger,
+html[data-theme='pastel'] .btn.danger.solid {
+  color: #fff;
+  text-shadow: 0 2px 0 var(--b-ink), 0 -1px 0 var(--b-ink), 1.5px 0 0 var(--b-ink), -1.5px 0 0 var(--b-ink),
+    1px 1px 0 var(--b-ink), -1px 1px 0 var(--b-ink), 1px -1px 0 var(--b-ink), -1px -1px 0 var(--b-ink);
+}
+/* Toggle chips: cream when off, mint with a white label when on. */
+html[data-theme='pastel'] .chip-check span {
+  --b-rim-hi: #ffffff;
+  --b-rim-mid: #f6d3e5;
+  --b-rim-lo: #c58fae;
+  --b-face-top: #fde3ef;
+  --b-face: #fff0f7;
+  --b-glow: #ffffff;
+  --b-ink: #3f5673;
+  color: #26374d;
+}
+html[data-theme='pastel'] .chip-check input:checked + span {
+  --b-rim-hi: #c9f2e1;
+  --b-rim-mid: #7dccad;
+  --b-rim-lo: #3f9c7c;
+  --b-face-top: #5fbb98;
+  --b-face: #7dccad;
+  --b-glow: #a9e4cd;
+  --b-ink: #3f5673;
+  color: #26374d;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+html[data-theme='pastel'] .btn:disabled,
+html[data-theme='pastel'] .btn.primary:disabled,
+html[data-theme='pastel'] .btn.danger:disabled,
+html[data-theme='pastel'] .btn.danger.solid:disabled {
+  --b-rim-hi: #eef2f6;
+  --b-rim-mid: #cfd8e2;
+  --b-rim-lo: #8797ab;
+  --b-face-top: #a9b6c6;
+  --b-face: #bac6d3;
+  --b-glow: #d6dde6;
+  --b-ink: #5f6f83;
+  color: #26374d;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+/* Scrollbars follow the palette. */
+html[data-theme='pastel'] ::-webkit-scrollbar-track {
+  background: rgba(77, 103, 135, 0.22);
+  box-shadow: inset 0 1px 3px rgba(47, 66, 92, 0.3);
+}
+html[data-theme='pastel'] ::-webkit-scrollbar-thumb {
+  box-shadow: 0 1px 2px rgba(47, 66, 92, 0.35);
+}
+html[data-theme='pastel']::-webkit-scrollbar-track {
+  background: var(--grass-3);
+  box-shadow: inset 2px 0 4px rgba(77, 103, 135, 0.35);
+}
+html[data-theme='pastel'] .log::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Text that style.css draws white straight on the page background or on the
+   light panels: ink reads better than white on pink or butter (8.7-10:1). */
+html[data-theme='pastel'] .lede,
+html[data-theme='pastel'] .eyebrow {
+  color: #26374d;
+  text-shadow: none;
+}
+html[data-theme='pastel'] .run-stats dt {
+  color: #fffbe0;
+}
+html[data-theme='pastel'] .card h3,
+html[data-theme='pastel'] .buy-heading,
+html[data-theme='pastel'] .buy-summary,
+html[data-theme='pastel'] .buy-summary b,
+html[data-theme='pastel'] .dirty-note,
+html[data-theme='pastel'] .buy-log .buy-count,
+html[data-theme='pastel'] .badge.ok,
+html[data-theme='pastel'] .switch {
+  color: #26374d;
+  text-shadow: none;
+}
+/* Crate names and "missing" placeholders on the butter crates. */
+html[data-theme='pastel'] .tile .name,
+html[data-theme='pastel'] .tile .ph {
+  color: #26374d;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+html[data-theme='pastel'] .tile .ph {
+  background: rgba(77, 103, 135, 0.12);
+}
+html[data-theme='pastel'] .buy-log .tag-off {
+  background: #dfe6ee;
+  color: #26374d;
+}
+/* Warnings in berry, not the light pink fill colour (2.7:1 -> 5.4:1). */
+html[data-theme='pastel'] .timing-safety.warn {
+  color: #b23a63;
+}
+html[data-theme='pastel'] .switch .track {
+  background: #c5cfdb;
+}
+html[data-theme='pastel'] .pill.err {
+  background: rgba(178, 58, 99, 0.92);
+}
+/* Toasts: mint with ink, berry with white. */
+html[data-theme='pastel'] .toast {
+  background: linear-gradient(180deg, #c9f2e1 0%, #7dccad 100%);
+  color: #26374d;
+  text-shadow: none;
+  box-shadow: 0 4px 0 #3f9c7c, 0 10px 20px rgba(47, 66, 92, 0.3);
+}
+html[data-theme='pastel'] .toast.err {
+  background: linear-gradient(180deg, #d9537f 0%, #b92c57 100%);
+  color: #fff;
+  text-shadow: 0 1px 0 #5a1a33;
+  box-shadow: 0 4px 0 #8e2448, 0 10px 20px rgba(47, 66, 92, 0.3);
+}
+/* The rest countdown bar fills pink, its time in ink. */
+html[data-theme='pastel'] #rest-bar-fill {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.35) 0 40%, rgba(255, 255, 255, 0) 41%), linear-gradient(180deg, #fbc4de 0%, #ee7fb6 100%);
+}
+html[data-theme='pastel'] .rest-bar .rest-bar-label {
+  color: #26374d;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+/* The empty screen was still farm green; slate like the log below it. */
+html[data-theme='pastel'] .viewport {
+  background: #2f425c;
+}
+html[data-theme='pastel'] input:disabled,
+html[data-theme='pastel'] select:disabled {
+  background: #e9eef4;
+  color: #5f6f83;
+}
+html[data-theme='pastel'] .check.locked,
+html[data-theme='pastel'] .timing-table tr.slack td {
+  color: #5f6f83;
+}
+html[data-theme='pastel'] .log {
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0) 0 22px, rgba(0, 0, 0, 0.1) 22px 24px), #2f425c;
+  color: #fff3f9;
+}
+
+/* Farmshop awning and cloth: pink-white awning, mint-white checks. */
+html[data-theme='pastel'] .page[data-page='wishlist']::before {
+  background: radial-gradient(circle at 50% 0, transparent 0 14px, var(--panel) 15px) 0 26px / 40px 20px repeat-x,
+    repeating-linear-gradient(90deg, #f599c6 0 40px, #fffaf2 40px 80px);
+}
+html[data-theme='pastel'] .grid {
+  background: repeating-linear-gradient(0deg, rgba(125, 204, 173, 0.45) 0 14px, rgba(255, 255, 255, 0) 14px 28px),
+    repeating-linear-gradient(90deg, rgba(125, 204, 173, 0.45) 0 14px, rgba(255, 255, 255, 0) 14px 28px), #f6fcf9;
+}
+html[data-theme='pastel'] .run-status.live,
+html[data-theme='pastel'] .share-url.active {
+  background: #e2f6ee;
+  border-color: #7dccad;
+}
+html[data-theme='pastel'] #library-picker-grid {
+  background: #dfe6ee;
+}
+
+@media (max-width: 900px) {
+  html[data-theme='pastel'] .nav {
+    background: rgba(77, 103, 135, 0.72);
+  }
+}
+
+/* Red "missing" badge: a white label on the light coral fill was too faint. */
+html[data-theme='pastel'] .badge.bad {
+  background: #c73561;
+}
+html[data-theme='pastel'] code {
+  background: rgba(77, 103, 135, 0.12);
+  color: #3f5673;
+}

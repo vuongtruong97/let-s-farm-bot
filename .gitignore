@@ -9,13 +9,17 @@ dist/
 build/
 data/config.json
 data/column.json
-data/macros/*.json
+data/run_prefs.json
 data/library/*.png
 data/buy_proofs/*.png
 screenshots/*.png
 screenshots/debug/*.png
 logs/*.log
+# Rotated logs (bot.log.1, .2, ...): *.log alone missed them.
+logs/*.log.*
 *.log
+# Old macro recordings; the macro feature is gone.
+data/macros/
 .DS_Store
 .coverage
 htmlcov/

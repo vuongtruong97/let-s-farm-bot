@@ -232,6 +232,70 @@ def httpd(data_home: Path):
     server.server_close()
 
 
+def test_share_api_local_only_when_bound_to_loopback(httpd: str):
+    code, info = _request(f"{httpd}/api/share")
+    assert code == 200
+    assert info["local_only"] is True
+    assert info["urls"] == []
+
+
+def test_share_api_lists_lan_urls_when_bound_to_all(monkeypatch, data_home: Path):
+    monkeypatch.setattr("app.web.server._lan_ipv4", lambda: ["192.168.1.20"])
+    server = ThreadingHTTPServer(("0.0.0.0", 0), BotWebHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        code, info = _request(f"http://127.0.0.1:{port}/api/share")
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert code == 200
+    assert info["local_only"] is False
+    assert info["urls"] == [f"http://192.168.1.20:{port}"]
+
+
+def test_theme_stylesheet_and_selector_are_served(httpd: str):
+    code, css = _request(f"{httpd}/static/themes.css")
+    assert code == 200
+    assert b"data-theme='pastel'" in css
+    code, page = _request(f"{httpd}/")
+    assert code == 200
+    assert b'id="theme-select"' in page
+    assert b"/static/themes.css" in page
+
+
+def test_screen_toggle_and_log_controls_are_on_the_page(httpd: str):
+    code, page = _request(f"{httpd}/")
+    assert code == 200
+    for marker in (b'id="btn-screen-toggle"', b'id="btn-log-expand"', b'id="log-details"'):
+        assert marker in page
+    # The shot button sits in its own row below the picture, not inside it.
+    assert page.index(b'id="viewport"') < page.index(b'class="viewport-actions"') < page.index(b'id="btn-shot"')
+
+
+def test_control_page_folds_options_and_one_off_actions(httpd: str):
+    code, page = _request(f"{httpd}/")
+    assert code == 200
+    for marker in (b'id="prefs-details"', b'id="once-details"', b'id="prefs-summary"'):
+        assert marker in page
+    # Everyday controls stay outside the folds; one-off actions live inside.
+    once = page.index(b'id="once-details"')
+    assert page.index(b'id="btn-start"') < page.index(b'id="prefs-details"') < once
+    assert page.index(b'id="btn-stop"') < page.index(b'id="prefs-details"')
+    assert page.index(b'data-run="restart_game"') > once
+    assert b'data-confirm="' in page[once:]
+
+
+def test_buy_history_is_a_foldable_section(httpd: str):
+    code, page = _request(f"{httpd}/")
+    assert code == 200
+    fold = page.index(b'id="buy-details"')
+    # The one-line summary sits in the <summary>, so it shows while folded.
+    assert fold < page.index(b'id="buy-summary"') < page.index(b"</summary>", fold)
+    assert page.index(b"</summary>", fold) < page.index(b'id="btn-buy-reset"') < page.index(b'id="buy-log"')
+
+
 def _request(url: str, method: str = "GET", payload: dict | None = None) -> tuple[int, dict | bytes]:
     data = None
     headers = {}
@@ -270,7 +334,6 @@ def test_web_state_and_item_upload(httpd: str, data_home: Path):
     code, page = _request(f"{httpd}/")
     assert code == 200
     assert b"Wishlist" in page
-    assert b"Macro" in page
     assert b"item-modal" in page
     assert b"library-picker" in page
     assert b'data-nav="develop"' in page
@@ -627,6 +690,10 @@ def test_web_run_screenshot_and_unknown(httpd: str, data_home: Path, monkeypatch
     code, png = _request(f"{httpd}/api/frame.png")
     assert code == 200
     assert isinstance(png, bytes) and png[:8] == b"\x89PNG\r\n\x1a\n"
+    # The live panel shows a small JPEG of the same frame.
+    code, jpg = _request(f"{httpd}/api/frame.jpg")
+    assert code == 200
+    assert isinstance(jpg, bytes) and jpg[:3] == b"\xff\xd8\xff"
     code, err = _request(f"{httpd}/api/run", "POST", {"action": "explode"})
     assert code == 400
     code, err = _request(
@@ -1026,3 +1093,229 @@ def test_loop_gives_up_after_too_many_restarts(data_home: Path, monkeypatch):
     assert len(ctl.launched) == LOOP_MAX_RESTARTS_PER_HOUR
     assert snap["status"] == "error"
     assert "restarted" in snap["last_error"]
+
+
+def test_run_prefs_round_trip_and_clamp(httpd: str, data_home: Path):
+    code, state = _request(f"{httpd}/api/state")
+    assert code == 200
+    # Nothing saved yet: newspaper on, rest from the config default.
+    assert state["run_prefs"]["newspaper"] is True
+    assert state["run_prefs"]["harvest"] is False
+    assert state["run_prefs"]["loop_rest_min"] == AppConfig().loop_rest_min
+
+    code, saved = _request(
+        f"{httpd}/api/run-prefs",
+        "PUT",
+        {"harvest": True, "news_mode": "follow", "crop": "corn", "limit": 99, "loop_rest_min": -3},
+    )
+    assert code == 200
+    prefs = saved["run_prefs"]
+    assert prefs["harvest"] is True
+    assert prefs["newspaper"] is True
+    assert prefs["news_mode"] == "follow"
+    assert prefs["crop"] == "corn"
+    assert prefs["limit"] == 20
+    assert prefs["loop_rest_min"] == 0.0
+
+    # A partial save keeps the rest; junk falls back instead of failing.
+    code, saved = _request(
+        f"{httpd}/api/run-prefs", "PUT", {"plant": True, "news_mode": "nope", "crop": "../x"}
+    )
+    assert code == 200
+    assert saved["run_prefs"]["harvest"] is True
+    assert saved["run_prefs"]["plant"] is True
+    assert saved["run_prefs"]["news_mode"] == "sweep"
+    assert saved["run_prefs"]["crop"] == "wheat"
+    code, state = _request(f"{httpd}/api/state")
+    assert state["run_prefs"] == saved["run_prefs"]
+
+
+def test_bulk_toggle_items(httpd: str, data_home: Path):
+    for key in ("egg", "milk"):
+        botdata.upsert_item(key, image_b64=_png_b64(), enabled=False)
+    code, body = _request(
+        f"{httpd}/api/items/bulk", "POST", {"ids": ["egg", "milk", "wheat"], "enabled": True}
+    )
+    assert code == 200
+    assert body["changed"] == 2
+    assert set(botdata.active_wishlist()) == {"egg", "milk", "wheat"}
+
+    # An unknown id fails the whole call: nothing is half applied.
+    code, err = _request(
+        f"{httpd}/api/items/bulk", "POST", {"ids": ["egg", "ghost"], "enabled": False}
+    )
+    assert code == 400
+    assert "ghost" in err["error"]
+    assert "egg" in botdata.active_wishlist()
+
+    code, _ = _request(f"{httpd}/api/items/bulk", "POST", {"ids": [], "enabled": False})
+    assert code == 400
+    code, _ = _request(f"{httpd}/api/items/bulk", "POST", {"ids": ["egg"], "enabled": "no"})
+    assert code == 400
+
+
+def test_buy_status_keeps_disabled_items(data_home: Path):
+    botdata.upsert_item("egg", enabled=True)
+    botdata.record_purchase("egg", kind="buy")
+    botdata.update_item("egg", enabled=False)
+    status = {row["id"]: row for row in botdata.wishlist_buy_status()}
+    assert status["egg"]["enabled"] is False
+    assert status["egg"]["buy_count"] == 1
+    assert status["wheat"]["enabled"] is True
+
+
+def test_status_endpoint_is_light(httpd: str, data_home: Path):
+    code, body = _request(f"{httpd}/api/status")
+    assert code == 200
+    assert set(body) == {"run", "wishlist_buys", "buys_rev"}
+    run = body["run"]
+    for key in ("started_at", "rounds", "phase", "rest_until", "frame_seq", "now", "logs", "log_seq"):
+        assert key in run
+
+
+def test_status_skips_what_the_page_already_has(httpd: str, data_home: Path, monkeypatch):
+    """Polled every second: with the log_seq and buys_rev it already holds,
+    the page gets neither the log nor the purchase history again (and the
+    server reads no purchase file or item PNG for it)."""
+    first = _request(f"{httpd}/api/status")[1]
+    log_seq, rev = first["run"]["log_seq"], first["buys_rev"]
+    # A nested context: undoing it must not undo data_home's redirect of the
+    # data directory, or the buy below lands in the real purchases.json.
+    with monkeypatch.context() as patched:
+        patched.setattr(
+            "app.web.server.botdata.wishlist_buy_status",
+            lambda: (_ for _ in ()).throw(AssertionError("history re-read")),
+        )
+        code, quiet = _request(f"{httpd}/api/status?log={log_seq}&buys={rev}")
+    assert code == 200
+    assert "wishlist_buys" not in quiet
+    assert "logs" not in quiet["run"]
+    assert quiet["buys_rev"] == rev
+    assert botdata.purchases_path().parent == data_home
+
+    # A buy moves buys_rev, so the history comes back.
+    botdata.record_purchase("wheat", kind="buy")
+    code, moved = _request(f"{httpd}/api/status?log={log_seq}&buys={rev}")
+    assert moved["buys_rev"] != rev
+    assert any(row["id"] == "wheat" and row["buy_count"] == 1 for row in moved["wishlist_buys"])
+
+
+def test_status_sends_the_log_when_it_moved(data_home: Path):
+    import logging
+
+    rt = _runtime()
+    seq = str(rt.log_seq)
+    assert "logs" not in rt.snapshot(known_log_seq=seq)
+    rt._log_handler.emit(
+        logging.LogRecord("farmbot", logging.INFO, __file__, 1, "one more line", None, None)
+    )
+    snap = rt.snapshot(known_log_seq=seq)
+    assert snap["logs"][-1].endswith("one more line")
+    assert str(snap["log_seq"]) != seq
+
+
+def test_rotated_logs_are_not_tracked():
+    """bot.log.1/.2/.3 matched no ignore rule and ~145k log lines landed in a
+    commit."""
+    text = (Path(__file__).resolve().parent.parent / ".gitignore").read_text(encoding="utf-8")
+    assert "logs/*.log.*" in text
+
+
+def test_snapshot_tracks_rounds_frames_and_run_time(data_home: Path):
+    from app.actions.farming import Action, ActionResult
+
+    rounds: list[int] = []
+
+    class Farming(_StubFarming):
+        def harvest_ready_fields(self, limit=1, should_stop=None):
+            self.device.screenshot()
+            rounds.append(1)
+            if len(rounds) >= 3:
+                runtime.stop()
+            return ActionResult(True, Action("HARVEST", "ok"))
+
+    from app.web.runtime import BotRuntime
+
+    runtime = BotRuntime(
+        device_factory=lambda cfg: _FakeCtl(),
+        farming_cls=Farming,
+        newspaper_cls=_StubNews,
+        loop_pause_s=0,
+    )
+    started = runtime.start("loop", {"harvest": True, "plant": False})
+    assert started["started_at"] is not None
+    assert started["finished_at"] is None
+    snap = _wait_idle(runtime)
+    assert snap["rounds"] == 2  # the third round was stopped mid-way
+    assert snap["frame_seq"] == 3
+    assert snap["frame_at"] is not None
+    assert snap["finished_at"] >= snap["started_at"]
+    assert snap["phase"] is None
+
+
+def test_skip_rest_starts_the_next_round(data_home: Path):
+    from app.actions.farming import Action, ActionResult
+    from app.web.runtime import BotRuntime
+
+    class News(_StubNews):
+        def shop_from_newspaper(
+            self, limit=1, should_stop=None, mode="shop", reset_home=True, until_done=False
+        ):
+            return ActionResult(True, Action("VISIT_SHOP", "done"))
+
+    runtime = BotRuntime(
+        device_factory=lambda cfg: _FakeCtl(),
+        farming_cls=_StubFarming,
+        newspaper_cls=News,
+        loop_pause_s=0,
+    )
+    assert runtime.skip_rest()["rest_until"] is None  # idle: a no-op
+    runtime.start("loop", {"harvest": False, "plant": False, "newspaper": True, "loop_rest_min": 60})
+    deadline = time.time() + 2
+    while runtime.snapshot()["rest_until"] is None and time.time() < deadline:
+        time.sleep(0.01)
+    resting = runtime.snapshot()
+    assert resting["phase"] == "rest"
+    assert resting["rest_s"] == 3600
+    assert resting["rest_until"] > resting["now"] + 3000
+    assert resting["rounds"] == 1
+
+    runtime.skip_rest()
+    deadline = time.time() + 3
+    while runtime.snapshot()["rounds"] < 2 and time.time() < deadline:
+        time.sleep(0.01)
+    assert runtime.snapshot()["rounds"] >= 2
+    runtime.stop()
+    snap = _wait_idle(runtime, timeout=3)
+    assert snap["status"] == "idle"
+    assert snap["rest_until"] is None
+
+
+def test_skip_rest_api(httpd: str, data_home: Path, monkeypatch: pytest.MonkeyPatch):
+    rt = _runtime()
+    monkeypatch.setattr("app.web.server.RUNTIME", rt)
+    code, body = _request(f"{httpd}/api/skip-rest", "POST", {})
+    assert code == 200
+    assert body["run"]["status"] == "idle"
+
+
+def test_bundled_font_is_served_and_cached(httpd: str):
+    with urllib.request.urlopen(f"{httpd}/static/baloo2-vietnamese.woff2", timeout=5) as res:
+        assert res.status == 200
+        assert res.headers.get_content_type() == "font/woff2"
+        assert "max-age" in res.headers["Cache-Control"]
+        assert res.read(4) == b"wOF2"
+    # Pages and scripts stay uncached so an edit shows on the next reload.
+    with urllib.request.urlopen(f"{httpd}/static/app.js", timeout=5) as res:
+        assert res.headers["Cache-Control"] == "no-store"
+
+
+def test_game_skin_pieces_are_wired(httpd: str):
+    _code, page = _request(f"{httpd}/")
+    assert page.count(b'class="modal-x"') == page.count(b"<dialog ")
+    assert b"rest-bar-label" in page
+    _code, css = _request(f"{httpd}/static/style.css")
+    for subset in (b"vietnamese", b"latin-ext", b"latin"):
+        assert b"/static/baloo2-" + subset + b".woff2" in css
+    _code, js = _request(f"{httpd}/static/app.js")
+    assert b".modal-x" in js

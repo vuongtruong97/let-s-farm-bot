@@ -6,11 +6,10 @@ import json
 import socket
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from app.config import AppConfig, load_config, save_config
 from app.storage import botdata
-from app.storage import macros as macrostore
 from app.web.runtime import BusyError, RUNTIME
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -18,7 +17,6 @@ SPA_PAGES = {
     "/",
     "/index.html",
     "/control",
-    "/macro",
     "/wishlist",
     "/library",
     "/config",
@@ -38,7 +36,11 @@ MIME = {
     ".png": "image/png",
     ".svg": "image/svg+xml",
     ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
 }
+# Fonts never change under the same name; everything else is re-read so an
+# edited page shows up on the next reload.
+CACHED_SUFFIXES = {".woff2"}
 
 
 class BotWebHandler(BaseHTTPRequestHandler):
@@ -58,16 +60,25 @@ class BotWebHandler(BaseHTTPRequestHandler):
         if path == "/api/state":
             self._send_json(200, _state())
             return
-        if path == "/api/macros":
-            self._send_json(200, {"macros": macrostore.list_macros()})
+        if path == "/api/share":
+            host, port = self.server.server_address[:2]
+            local_only = host not in {"0.0.0.0", "::"}
+            urls = [] if local_only else [f"http://{ip}:{port}" for ip in _lan_ipv4()]
+            self._send_json(200, {"urls": urls, "local_only": local_only, "port": port})
             return
-        if path == "/api/frame.png":
-            frame = RUNTIME.frame_png()
+        if path == "/api/status":
+            self._send_json(200, _status(parse_qs(parsed.query)))
+            return
+        if path in ("/api/frame.png", "/api/frame.jpg"):
+            # The live panel shows the small JPEG; the PNG is the full-size
+            # original behind "open in a new tab".
+            jpeg = path.endswith(".jpg")
+            frame = RUNTIME.frame_jpeg() if jpeg else RUNTIME.frame_png()
             if not frame:
                 self._send_json(404, {"error": "no screenshot yet"})
                 return
             self.send_response(200)
-            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Type", "image/jpeg" if jpeg else "image/png")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(frame)))
             self.end_headers()
@@ -125,6 +136,15 @@ class BotWebHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, {"config": saved})
             return
+        if parsed.path == "/api/run-prefs":
+            try:
+                payload = self._read_json()
+                saved = botdata.save_run_prefs(payload)
+            except (ValueError, json.JSONDecodeError) as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            self._send_json(200, {"run_prefs": saved})
+            return
         self._send_json(404, {"error": "not found"})
 
     def do_POST(self) -> None:
@@ -138,47 +158,12 @@ class BotWebHandler(BaseHTTPRequestHandler):
             RUNTIME.stop()
             self._send_json(200, _state())
             return
+        if parsed.path == "/api/skip-rest":
+            self._send_json(200, {"run": RUNTIME.skip_rest()})
+            return
         if parsed.path == "/api/run":
             try:
                 RUNTIME.start(str(payload.get("action") or ""), payload)
-            except BusyError as exc:
-                self._send_json(409, {"error": str(exc), **_state()})
-                return
-            except ValueError as exc:
-                self._send_json(400, {"error": str(exc)})
-                return
-            self._send_json(200, _state())
-            return
-        if parsed.path == "/api/macros":
-            try:
-                saved = macrostore.save_macro(payload)
-            except (ValueError, TypeError) as exc:
-                self._send_json(400, {"error": str(exc)})
-                return
-            self._send_json(200, {"id": saved.stem, **_state()})
-            return
-        if parsed.path == "/api/macros/record/start":
-            try:
-                RUNTIME.start_record(str(payload.get("name") or ""))
-            except BusyError as exc:
-                self._send_json(409, {"error": str(exc), **_state()})
-                return
-            except ValueError as exc:
-                self._send_json(400, {"error": str(exc)})
-                return
-            self._send_json(200, _state())
-            return
-        if parsed.path == "/api/macros/record/stop":
-            try:
-                RUNTIME.stop_record()
-            except ValueError as exc:
-                self._send_json(400, {"error": str(exc)})
-                return
-            self._send_json(200, _state())
-            return
-        if parsed.path == "/api/macros/gesture":
-            try:
-                RUNTIME.apply_gesture(payload)
             except BusyError as exc:
                 self._send_json(409, {"error": str(exc), **_state()})
                 return
@@ -205,6 +190,15 @@ class BotWebHandler(BaseHTTPRequestHandler):
                     enabled=payload.get("enabled"),
                 )
                 self._send_json(200, {"item": row, **_state()})
+                return
+            if parsed.path == "/api/items/bulk":
+                ids = payload.get("ids")
+                if not isinstance(ids, list) or not ids:
+                    raise ValueError("ids list required")
+                if not isinstance(payload.get("enabled"), bool):
+                    raise ValueError("enabled must be true or false")
+                changed = botdata.set_items_enabled(ids, payload["enabled"])
+                self._send_json(200, {"changed": changed, **_state()})
                 return
             if parsed.path == "/api/library":
                 if not payload.get("image"):
@@ -237,13 +231,6 @@ class BotWebHandler(BaseHTTPRequestHandler):
         parts = [p for p in parsed.path.split("/") if p]
         try:
             payload = self._read_json()
-            if (
-                len(parts) == 5
-                and parts[:4] == ["api", "macros", "record", "steps"]
-            ):
-                RUNTIME.record_set_wait(int(parts[4]), int(payload.get("ms") or 0))
-                self._send_json(200, _state())
-                return
             if len(parts) == 3 and parts[0] == "api" and parts[1] == "items":
                 kwargs: dict = {}
                 if payload.get("id"):
@@ -270,17 +257,6 @@ class BotWebHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         parts = [p for p in parsed.path.split("/") if p]
         try:
-            if (
-                len(parts) == 5
-                and parts[:4] == ["api", "macros", "record", "steps"]
-            ):
-                RUNTIME.record_remove_step(int(parts[4]))
-                self._send_json(200, _state())
-                return
-            if len(parts) == 3 and parts[0] == "api" and parts[1] == "macros":
-                macrostore.delete_macro(parts[2])
-                self._send_json(200, _state())
-                return
             if len(parts) == 3 and parts[0] == "api" and parts[1] == "items":
                 botdata.remove_item(parts[2], delete_image=True)
                 self._send_json(200, _state())
@@ -339,10 +315,14 @@ class BotWebHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not found"})
             return
         data = path.read_bytes()
-        mime = content_type or MIME.get(path.suffix.lower(), "application/octet-stream")
+        suffix = path.suffix.lower()
+        mime = content_type or MIME.get(suffix, "application/octet-stream")
         self.send_response(200)
         self.send_header("Content-Type", mime)
-        self.send_header("Cache-Control", "no-store")
+        self.send_header(
+            "Cache-Control",
+            "public, max-age=604800" if suffix in CACHED_SUFFIXES else "no-store",
+        )
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -440,11 +420,30 @@ def _state() -> dict:
         "crops": botdata.crop_entries(),
         "templates": botdata.list_templates(),
         "library": botdata.list_library(),
-        "macros": macrostore.list_macros(),
         "run": RUNTIME.snapshot(),
+        "run_prefs": botdata.load_run_prefs(),
         "purchases": botdata.list_purchases(),
         "wishlist_buys": botdata.wishlist_buy_status(),
+        "buys_rev": botdata.buys_revision(),
     }
+
+
+def _status(query: dict[str, list[str]]) -> dict:
+    """What the page polls every second while the bot runs.
+
+    The page sends back the log_seq and buys_rev it already holds; the log
+    and the purchase history ride along only when they moved, so a quiet poll
+    is ~1 KB and reads no file (the full history re-reads purchases.json and
+    every item PNG, ~20 KB).
+    """
+    have_log = (query.get("log") or [None])[0]
+    have_buys = (query.get("buys") or [""])[0]
+    out: dict = {"run": RUNTIME.snapshot(known_log_seq=have_log)}
+    rev = botdata.buys_revision()
+    out["buys_rev"] = rev
+    if have_buys != rev:
+        out["wishlist_buys"] = botdata.wishlist_buy_status()
+    return out
 
 
 class BotHTTPServer(ThreadingHTTPServer):

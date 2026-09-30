@@ -32,7 +32,7 @@
   "so_do": {
     "template": "item_so_do",
     "news_template": "item_so_do_news",
-    "enabled": true
+    "enabled": false
   },
   "bua_mo_rong_dat": {
     "template": "item_bua_mo_rong_dat",
@@ -72,7 +72,7 @@
   "van_go": {
     "template": "item_van_go",
     "news_template": "item_van_go_news",
-    "enabled": true
+    "enabled": false
   },
   "pho_mai": {
     "template": "item_pho_mai",
@@ -122,7 +122,7 @@
   "duong_trang": {
     "template": "item_duong_trang",
     "news_template": "item_duong_trang_news",
-    "enabled": true
+    "enabled": false
   },
   "bat_kem": {
     "template": "item_bat_kem",
@@ -188,5 +188,15 @@
     "template": "item_siro",
     "news_template": "item_siro_news",
     "enabled": true
+  },
+  "duong_nau": {
+    "template": "item_duong_nau",
+    "news_template": "item_duong_nau_news",
+    "enabled": false
+  },
+  "banh_hoa_qua": {
+    "template": "item_banh_hoa_qua",
+    "news_template": "item_banh_hoa_qua_news",
+    "enabled": false
   }
 }

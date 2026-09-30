@@ -5,13 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Hay Day Bot — Điều khiển bot</title>
     <link rel="stylesheet" href="/static/style.css" />
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌾</text></svg>" />
+    <link rel="stylesheet" href="/static/themes.css" />
+    <meta name="theme-color" content="#4b9427" />
+    <script>
+      try {
+        var t = localStorage.getItem('farmbot.theme');
+        if (t) document.documentElement.dataset.theme = JSON.parse(t);
+      } catch (e) {}
+    </script>
+    <link id="favicon" rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌾</text></svg>" />
   </head>
   <body data-page="control" class="has-live">
     <div class="grain"></div>
     <nav class="nav" aria-label="Trang">
       <a href="/control" data-nav="control" class="active" aria-current="page">Điều khiển</a>
-      <a href="/macro" data-nav="macro">Macro</a>
       <a href="/wishlist" data-nav="wishlist">Wishlist</a>
       <a href="/library" data-nav="library">Thư viện</a>
       <a href="/crops" data-nav="crops">Cây trồng</a>
@@ -28,156 +35,255 @@
       </div>
       <div class="top-status">
         <span id="device-pill" class="pill">Chưa kết nối</span>
-        <span id="run-pill" class="pill idle">Đang nghỉ</span>
+        <span id="run-pill" class="pill idle">Sẵn sàng</span>
+        <select id="theme-select" class="pill pill-btn theme-select" aria-label="Phong cách giao diện" title="Đổi phong cách giao diện"></select>
+        <button id="btn-share" class="pill pill-btn" type="button" title="Mở bot trên điện thoại trong cùng mạng Wi-Fi">📱 Chia sẻ</button>
+        <button id="btn-notify" class="pill pill-btn" type="button" hidden title="Thông báo trình duyệt khi bot lỗi hoặc dừng">🔔 Báo khi lỗi</button>
       </div>
     </header>
 
-    <p id="toast" class="toast" hidden></p>
+    <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
 
     <main class="shell">
       <aside id="live-panel" class="live-panel card">
-        <h2>Màn hình máy</h2>
+        <div class="panel-head">
+          <h2>Màn hình máy</h2>
+          <span id="frame-age" class="muted tiny"></span>
+        </div>
         <div class="viewport" id="viewport">
-          <img id="live-frame" alt="Màn hình máy" hidden />
+          <a id="live-link" href="/api/frame.png" target="_blank" rel="noopener" title="Mở ảnh gốc trong tab mới" hidden>
+            <img id="live-frame" alt="Màn hình máy" />
+          </a>
           <div id="live-empty" class="empty-frame">Chưa có ảnh — Kết nối hoặc Chụp màn hình</div>
         </div>
-        <p id="run-note" class="muted"></p>
-        <pre id="run-log" class="log"></pre>
-        <div class="buy-heading-row">
-          <h3 class="buy-heading">Thời gian vòng shop</h3>
-          <span id="timing-head" class="muted timing-head"></span>
+        <div class="viewport-actions">
+          <p id="run-note" class="muted"></p>
+          <button id="btn-shot" class="btn btn-round" type="button" data-run="screenshot" aria-label="Chụp màn hình máy" title="Chụp màn hình máy"></button>
+          <button id="btn-screen-toggle" class="btn btn-round" type="button" aria-pressed="true" aria-label="Màn hình: Bật" title="Màn hình đang bật. Bấm để ngừng tải ảnh mới về trình duyệt"></button>
         </div>
-        <div id="timing-panel" hidden>
-          <div id="timing-split" class="timing-split"></div>
-          <p id="timing-safety" class="timing-safety"></p>
-          <div class="timing-scroll">
-            <table class="timing-table">
-              <thead>
-                <tr>
-                  <th>Bước</th>
-                  <th>Trần</th>
-                  <th>Lần này</th>
-                  <th>TB</th>
-                  <th>Min–Max</th>
-                  <th>ADB</th>
-                  <th>Sleep</th>
-                  <th>CPU</th>
-                  <th>Ảnh</th>
-                  <th>Đụng trần</th>
-                  <th>N</th>
-                </tr>
-              </thead>
-              <tbody id="timing-log"></tbody>
-            </table>
+
+        <details id="log-details" class="fold log-fold" open>
+          <summary>
+            <span class="buy-heading">Nhật ký</span>
+            <button id="btn-log-expand" class="btn btn-compact" type="button" aria-pressed="false" title="Cho khung nhật ký cao hơn">⤢ Mở rộng</button>
+          </summary>
+          <pre id="run-log" class="log" aria-label="Nhật ký bot"></pre>
+        </details>
+
+        <details id="timing-details" class="fold">
+          <summary>
+            <span class="buy-heading">Thời gian vòng shop</span>
+            <span id="timing-head" class="muted timing-head"></span>
+          </summary>
+          <div id="timing-panel" hidden>
+            <div id="timing-split" class="timing-split"></div>
+            <p id="timing-safety" class="timing-safety"></p>
+            <div class="timing-scroll">
+              <table class="timing-table">
+                <thead>
+                  <tr>
+                    <th>Bước</th>
+                    <th>Trần</th>
+                    <th>Lần này</th>
+                    <th>TB</th>
+                    <th>Min–Max</th>
+                    <th>ADB</th>
+                    <th>Sleep</th>
+                    <th>CPU</th>
+                    <th>Ảnh</th>
+                    <th>Đụng trần</th>
+                    <th>N</th>
+                  </tr>
+                </thead>
+                <tbody id="timing-log"></tbody>
+              </table>
+            </div>
+            <p id="timing-waits" class="timing-waits"></p>
           </div>
-          <p id="timing-waits" class="timing-waits"></p>
-        </div>
-        <div class="buy-heading-row">
-          <h3 class="buy-heading">Lịch sử mua</h3>
-          <button id="btn-buy-reset" class="btn danger btn-compact" type="button">Xóa</button>
-        </div>
-        <table class="buy-log">
-          <thead>
-            <tr>
-              <th>Wishlist</th>
-              <th>Khớp</th>
-              <th>Mua</th>
-            </tr>
-          </thead>
-          <tbody id="buy-log"></tbody>
-        </table>
+        </details>
+
+        <details id="buy-details" class="fold" open>
+          <summary>
+            <h3 class="buy-heading">Lịch sử mua</h3>
+            <span id="buy-summary" class="muted buy-summary prefs-summary"></span>
+          </summary>
+          <div class="buy-heading-row">
+            <label class="check small"><input id="buy-show-all" type="checkbox" /> Cả item chưa mua</label>
+            <button id="btn-buy-reset" class="btn danger btn-compact" type="button">Xóa</button>
+          </div>
+          <table class="buy-log">
+            <thead>
+              <tr>
+                <th>Wishlist</th>
+                <th>Khớp</th>
+                <th>Mua</th>
+                <th>Số lượng</th>
+              </tr>
+            </thead>
+            <tbody id="buy-log"></tbody>
+          </table>
+        </details>
       </aside>
 
       <section class="page card active" data-page="control">
-        <h2>Điều khiển bot</h2>
-        <p class="muted">Vòng lặp: thu hoạch / trồng / ghé hết shop trên báo, về nhà, xóa bộ nhớ vòng cũ, nghỉ số phút đã chọn, rồi chạy vòng mới. Một lệnh một-shot chạy xong thì nghỉ.</p>
-        <div class="behaviors">
-          <label class="check"><input id="bh" type="checkbox" /> Thu hoạch</label>
-          <label class="check"><input id="bp" type="checkbox" /> Trồng</label>
-          <label class="check"><input id="bn" type="checkbox" checked /> Báo</label>
-          <label class="check"><input type="radio" name="news-mode" value="follow" /> Ghé ngay wishlist</label>
-          <label class="check"><input type="radio" name="news-mode" value="sweep" checked /> Ưu tiên rồi lần lượt</label>
-          <label
-            >Cây
-            <input id="run-crop" value="wheat" />
-          </label>
-          <label
-            >Limit / vòng
-            <input id="run-limit" type="number" min="1" max="20" value="20" />
-          </label>
-          <label
-            >Nghỉ sau hết shop (phút)
-            <input id="run-rest-min" type="number" min="0" max="180" step="0.5" value="5" />
-          </label>
+        <div id="run-status" class="run-status idle" aria-live="polite">
+          <div class="run-status-main">
+            <span class="dot" aria-hidden="true"></span>
+            <div>
+              <strong id="run-status-title">Sẵn sàng</strong>
+              <p id="run-status-sub" class="muted">Chọn hành vi rồi bấm Bắt đầu.</p>
+            </div>
+          </div>
+          <dl class="run-stats">
+            <div>
+              <dt>Thời gian</dt>
+              <dd id="stat-elapsed">—</dd>
+            </div>
+            <div>
+              <dt>Vòng xong</dt>
+              <dd id="stat-rounds">—</dd>
+            </div>
+            <div>
+              <dt>Mua phiên này</dt>
+              <dd id="stat-buys">—</dd>
+            </div>
+          </dl>
+          <div id="rest-box" class="rest-box" hidden>
+            <div class="rest-line">
+              <span>Nghỉ giữa vòng · còn <b id="rest-left">0:00</b></span>
+              <button id="btn-skip-rest" class="btn btn-compact" type="button">Chạy vòng mới ngay</button>
+            </div>
+            <div class="rest-bar"><span id="rest-bar-fill"></span><span id="rest-bar-label" class="rest-bar-label" aria-hidden="true"></span></div>
+          </div>
         </div>
-        <div class="row wrap">
-          <button id="btn-start" class="btn primary" type="button">Bắt đầu vòng lặp</button>
-          <button id="btn-stop" class="btn danger" type="button" disabled>Dừng</button>
-          <button class="btn" type="button" data-run="connect">Kết nối</button>
-        </div>
-        <div class="row wrap">
-          <button class="btn" type="button" data-run="go_home">Về nhà</button>
-          <button class="btn" type="button" data-run="harvest">Thu hoạch 1 lần</button>
-          <button class="btn" type="button" data-run="plant">Trồng 1 lần</button>
-          <button class="btn" type="button" data-run="newspaper" data-news-mode="follow">Ghé ngay 1 lần</button>
-          <button class="btn" type="button" data-run="newspaper" data-news-mode="sweep">Lần lượt 1 lần</button>
-          <button class="btn" type="button" data-run="restart_game">Khởi động lại game</button>
-        </div>
-      </section>
 
-      <section class="page card" data-page="macro">
-        <h2>Macro — ghi / phát lại</h2>
-        <p class="muted">Click hoặc kéo trên ảnh live, hoặc chơi trên BlueStacks. Lưu tap/swipe rồi phát lại toạ độ tuyệt đối. Góc nhìn khác thì ghi lại.</p>
-        <div class="row wrap">
-          <label
-            >Tên
-            <input id="macro-name" placeholder="open_shop" autocomplete="off" />
-          </label>
-          <button id="btn-record" class="btn primary" type="button">Ghi</button>
-          <button id="btn-record-stop" class="btn danger" type="button" disabled>Dừng ghi</button>
-          <button id="btn-macro-play" class="btn" type="button">Phát</button>
-          <button id="btn-macro-back" class="btn" type="button" disabled>Back</button>
+        <h3 title="Mỗi vòng: về nhà → thu hoạch / trồng → ghé hết shop trên báo → nghỉ số phút đã chọn → vòng mới. Tuỳ chọn tự lưu.">Hành động</h3>
+        <div id="run-prefs" class="behaviors">
+          <div class="loop-row">
+            <div class="toggle-group" role="group" aria-label="Hành vi">
+              <label class="chip-check"><input id="bh" type="checkbox" /> <span>🌾 Thu hoạch</span></label>
+              <label class="chip-check"><input id="bp" type="checkbox" /> <span>🌱 Trồng</span></label>
+              <label class="chip-check"><input id="bn" type="checkbox" checked /> <span>📰 Mua hàng</span></label>
+            </div>
+            <div class="row main-actions">
+              <button id="btn-start" class="btn primary big" type="button">▶ Bắt đầu</button>
+              <button id="btn-stop" class="btn danger big" type="button" disabled>■ Dừng</button>
+            </div>
+          </div>
+          <details id="prefs-details" class="fold">
+            <summary>
+              <span class="buy-heading">Tuỳ chọn vòng lặp</span>
+              <span id="prefs-summary" class="muted prefs-summary"></span>
+            </summary>
+            <div class="field-grid">
+              <label id="lbl-crop"
+                >Cây trồng
+                <select id="run-crop">
+                  <option value="wheat">wheat</option>
+                </select>
+              </label>
+              <label id="lbl-news-mode"
+                >Chế độ báo
+                <select id="news-mode">
+                  <option value="sweep">Ưu tiên rồi lần lượt</option>
+                  <option value="follow">Ghé ngay wishlist</option>
+                </select>
+              </label>
+              <label
+                >Limit / vòng
+                <input id="run-limit" type="number" min="1" max="20" value="20" />
+              </label>
+              <label id="lbl-rest"
+                >Nghỉ sau hết shop (phút)
+                <input id="run-rest-min" type="number" min="0" max="180" step="0.5" value="5" />
+              </label>
+            </div>
+          </details>
+          <p id="prefs-status" class="muted tiny" aria-live="polite"></p>
         </div>
-        <p id="macro-note" class="muted"></p>
-        <ol id="macro-steps" class="macro-steps"></ol>
-        <div id="macros" class="grid compact"></div>
+
+        <details id="once-details" class="fold">
+          <summary>
+            <span class="buy-heading">Chạy một lần</span>
+            <span class="muted prefs-summary">Về nhà, thu hoạch, trồng, ghé shop, kết nối…</span>
+          </summary>
+          <div class="once-grid">
+            <button class="btn btn-compact" type="button" data-run="go_home">Về nhà</button>
+            <button class="btn btn-compact" type="button" data-run="harvest">Thu hoạch</button>
+            <button class="btn btn-compact" type="button" data-run="plant">Trồng</button>
+            <button class="btn btn-compact" type="button" data-run="newspaper" data-news-mode="follow">Ghé ngay</button>
+            <button class="btn btn-compact" type="button" data-run="newspaper" data-news-mode="sweep">Lần lượt</button>
+            <button class="btn btn-compact" type="button" data-run="connect">Kết nối</button>
+            <button class="btn btn-compact" type="button" data-run="restart_game" data-confirm="Tắt hẳn game rồi mở lại? Bot sẽ đợi tới khi thấy nông trại." data-confirm-ok="Khởi động lại">Khởi động lại game</button>
+          </div>
+        </details>
       </section>
 
       <section class="page card" data-page="wishlist">
-        <h2>Wishlist — mua trên báo</h2>
-        <p class="muted">Mỗi vật phẩm có hai crop: <strong>shop</strong> (có màu, kích thước thùng) và <strong>báo</strong> (màu in, kích thước tin). Chọn ảnh từ thư viện hoặc tải lên. Bấm vào vật phẩm để sửa.</p>
-        <form id="item-form" class="add-form item-add">
-          <label
-            >Mã item
-            <input id="item-id" name="id" placeholder="wheat" required autocomplete="off" />
-          </label>
-          <div class="image-pick">
-            <span class="thumb-cap">Ảnh shop (màu)</span>
-            <input id="item-shop-lib" type="hidden" />
-            <img id="item-preview-img" class="slot-preview" alt="Shop" hidden />
-            <div class="row wrap">
-              <button class="btn" type="button" data-open-picker="add-shop">Thư viện</button>
-              <label class="file-btn"
-                >Tải lên
-                <input id="item-file" name="file" type="file" accept="image/png,image/*" />
-              </label>
+        <div class="section-head">
+          <h2>Wishlist — mua trên báo</h2>
+          <span id="wish-count" class="muted"></span>
+        </div>
+
+        <details id="item-add" class="fold add-fold">
+          <summary><span>＋ Thêm vật phẩm</span></summary>
+          <p class="muted">Mỗi vật phẩm có hai crop: <strong>shop</strong> (có màu, kích thước thùng) và <strong>báo</strong> (màu in, kích thước tin). Chọn ảnh từ thư viện hoặc tải lên. Trùng mã thì cập nhật item cũ.</p>
+          <form id="item-form" class="add-form item-add">
+            <label
+              >Mã item
+              <input id="item-id" name="id" placeholder="wheat" required autocomplete="off" title="Chữ thường, số, gạch dưới; bắt đầu bằng chữ" />
+            </label>
+            <div class="image-pick">
+              <span class="thumb-cap">Ảnh shop (màu)</span>
+              <input id="item-shop-lib" type="hidden" />
+              <img id="item-preview-img" class="slot-preview" alt="Shop" hidden />
+              <div class="row wrap">
+                <button class="btn" type="button" data-open-picker="add-shop">Thư viện</button>
+                <label class="file-btn"
+                  >Tải lên
+                  <input id="item-file" name="file" type="file" accept="image/png,image/*" />
+                </label>
+              </div>
             </div>
-          </div>
-          <div class="image-pick">
-            <span class="thumb-cap">Ảnh báo (màu in)</span>
-            <input id="item-news-lib" type="hidden" />
-            <img id="item-news-preview-img" class="slot-preview" alt="Báo" hidden />
-            <div class="row wrap">
-              <button class="btn" type="button" data-open-picker="add-news">Thư viện</button>
-              <label class="file-btn"
-                >Tải lên
-                <input id="item-news-file" name="news" type="file" accept="image/png,image/*" />
-              </label>
+            <div class="image-pick">
+              <span class="thumb-cap">Ảnh báo (màu in)</span>
+              <input id="item-news-lib" type="hidden" />
+              <img id="item-news-preview-img" class="slot-preview" alt="Báo" hidden />
+              <div class="row wrap">
+                <button class="btn" type="button" data-open-picker="add-news">Thư viện</button>
+                <label class="file-btn"
+                  >Tải lên
+                  <input id="item-news-file" name="news" type="file" accept="image/png,image/*" />
+                </label>
+              </div>
             </div>
+            <button class="btn primary" type="submit">Thêm / cập nhật</button>
+          </form>
+          <p id="item-preview" class="muted" hidden>Shop = màu. Báo = in đen/nâu, kích thước tin.</p>
+        </details>
+
+        <div class="toolbar">
+          <input id="wish-search" type="search" placeholder="Tìm item…" autocomplete="off" aria-label="Tìm item" />
+          <div class="chips" role="group" aria-label="Lọc">
+            <button class="chip active" type="button" data-wish-filter="all">Tất cả <span data-count="all"></span></button>
+            <button class="chip" type="button" data-wish-filter="on">Đang mua <span data-count="on"></span></button>
+            <button class="chip" type="button" data-wish-filter="off">Tắt <span data-count="off"></span></button>
+            <button class="chip" type="button" data-wish-filter="missing">Thiếu ảnh <span data-count="missing"></span></button>
           </div>
-          <button class="btn primary" type="submit">Thêm / cập nhật</button>
-        </form>
-        <p id="item-preview" class="muted" hidden>Shop = màu. Báo = in đen/nâu, kích thước tin.</p>
+          <select id="wish-sort" aria-label="Sắp xếp">
+            <option value="name">Tên A–Z</option>
+            <option value="buys">Mua nhiều nhất</option>
+            <option value="recent">Mua gần đây</option>
+            <option value="enabled">Đang mua trước</option>
+          </select>
+        </div>
+        <div class="bulk-row">
+          <span id="wish-shown" class="muted"></span>
+          <div class="row">
+            <button class="btn btn-compact" type="button" data-bulk="on">Bật mua tất cả đang hiện</button>
+            <button class="btn btn-compact" type="button" data-bulk="off">Tắt tất cả đang hiện</button>
+          </div>
+        </div>
         <div id="items" class="grid"></div>
       </section>
 
@@ -199,9 +305,9 @@
           <button class="btn primary" type="submit">Thêm vào thư viện</button>
         </form>
         <div class="row wrap filter-row">
-          <button class="btn active" type="button" data-lib-filter="all">Tất cả</button>
-          <button class="btn" type="button" data-lib-filter="shop">Shop</button>
-          <button class="btn" type="button" data-lib-filter="news">Báo</button>
+          <button class="chip active" type="button" data-lib-filter="all">Tất cả</button>
+          <button class="chip" type="button" data-lib-filter="shop">Shop</button>
+          <button class="chip" type="button" data-lib-filter="news">Báo</button>
         </div>
         <div id="library" class="grid compact"></div>
       </section>
@@ -238,67 +344,79 @@
 
       <section class="page card" data-page="config">
         <h2>Cấu hình</h2>
-        <p class="muted">Lưu vào <code>data/config.json</code>. Không bao giờ cho phép tiêu diamond.</p>
+        <p class="muted">Lưu vào <code>data/config.json</code>. Không bao giờ cho phép tiêu diamond. Thời gian nghỉ giữa vòng chỉnh ở trang Điều khiển.</p>
         <form id="config-form" class="config-form" method="post" action="#">
-          <label
-            >ADB host
-            <input id="adb_host" name="adb_host" />
-          </label>
-          <label
-            >ADB port
-            <input id="adb_port" name="adb_port" type="number" min="1" max="65535" placeholder="auto" />
-          </label>
-          <label
-            >ADB binary (tuỳ chọn)
-            <input id="adb_bin" name="adb_bin" placeholder="adb" />
-          </label>
-          <label
-            >Package game
-            <input id="package" name="package" placeholder="letsfarm.com.playday" />
-          </label>
-          <label
-            >Ngưỡng template (0.80 khuyến nghị)
-            <input id="template_threshold" name="template_threshold" type="number" min="0.5" max="0.90" step="0.01" />
-          </label>
-          <label
-            >Ngưỡng mua hàng — khớp icon trong stall (0.72 khuyến nghị)
-            <input id="buy_threshold" name="buy_threshold" type="number" min="0.5" max="0.90" step="0.01" />
-          </label>
-          <label
-            >Ngưỡng báo — khớp icon tin Daily Dirt (0.72 khuyến nghị)
-            <input id="news_threshold" name="news_threshold" type="number" min="0.5" max="0.90" step="0.01" />
-          </label>
-          <label
-            >Nghỉ sau hết shop trên báo (phút)
-            <input id="loop_rest_min" name="loop_rest_min" type="number" min="0" max="180" step="0.5" />
-          </label>
-          <label
-            >Chờ giữa action (giây)
-            <input id="action_wait_s" name="action_wait_s" type="number" min="0" max="10" step="0.1" />
-          </label>
-          <label
-            >Chờ sau mua hàng — trần đợi SOLD (giây)
-            <input id="buy_wait_s" name="buy_wait_s" type="number" min="0" max="10" step="0.1" />
-          </label>
-          <label
-            >Chờ vào shop / mở báo / về nhà — trần đợi màn hình (giây)
-            <input id="visit_wait_s" name="visit_wait_s" type="number" min="0" max="10" step="0.1" />
-          </label>
-          <label
-            >Nghỉ giữa hai lần chụp khi chờ (giây, 0 = chụp liên tục)
-            <input id="poll_interval_s" name="poll_interval_s" type="number" min="0" max="2" step="0.05" />
-          </label>
-          <label
-            >Swipe kéo sạp hàng (ms)
-            <input id="stall_swipe_ms" name="stall_swipe_ms" type="number" min="50" max="3000" />
-          </label>
-          <label
-            >Swipe (ms)
-            <input id="swipe_duration_ms" name="swipe_duration_ms" type="number" min="50" max="3000" />
-          </label>
-          <label class="check"> <input id="debug" name="debug" type="checkbox" /> Lưu overlay debug </label>
-          <label class="check locked"> <input id="allow_diamond_spending" type="checkbox" disabled /> Cho phép tiêu diamond (khoá) </label>
-          <button class="btn primary" type="submit">Lưu cấu hình</button>
+          <fieldset>
+            <legend>Kết nối ADB</legend>
+            <label
+              >ADB host
+              <input id="adb_host" name="adb_host" />
+            </label>
+            <label
+              >ADB port
+              <input id="adb_port" name="adb_port" type="number" min="1" max="65535" placeholder="auto" />
+            </label>
+            <label
+              >ADB binary (tuỳ chọn)
+              <input id="adb_bin" name="adb_bin" placeholder="adb" />
+            </label>
+            <label
+              >Package game
+              <input id="package" name="package" placeholder="letsfarm.com.playday" />
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Ngưỡng nhận diện</legend>
+            <label
+              >Template (0.80 khuyến nghị)
+              <input id="template_threshold" name="template_threshold" type="number" min="0.5" max="0.90" step="0.01" />
+            </label>
+            <label
+              >Mua hàng — icon trong stall (0.72 khuyến nghị)
+              <input id="buy_threshold" name="buy_threshold" type="number" min="0.5" max="0.90" step="0.01" />
+            </label>
+            <label
+              >Báo — icon tin Daily Dirt (0.72 khuyến nghị)
+              <input id="news_threshold" name="news_threshold" type="number" min="0.5" max="0.90" step="0.01" />
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Thời gian chờ &amp; vuốt</legend>
+            <label
+              >Chờ giữa action (giây)
+              <input id="action_wait_s" name="action_wait_s" type="number" min="0" max="10" step="0.1" />
+            </label>
+            <label
+              >Chờ sau mua hàng — trần đợi SOLD (giây)
+              <input id="buy_wait_s" name="buy_wait_s" type="number" min="0" max="10" step="0.1" />
+            </label>
+            <label
+              >Chờ vào shop / mở báo / về nhà — trần đợi màn hình (giây)
+              <input id="visit_wait_s" name="visit_wait_s" type="number" min="0" max="10" step="0.1" />
+            </label>
+            <label
+              >Nghỉ giữa hai lần chụp khi chờ (giây, 0 = chụp liên tục)
+              <input id="poll_interval_s" name="poll_interval_s" type="number" min="0" max="2" step="0.05" />
+            </label>
+            <label
+              >Swipe kéo sạp hàng (ms)
+              <input id="stall_swipe_ms" name="stall_swipe_ms" type="number" min="50" max="3000" />
+            </label>
+            <label
+              >Swipe (ms)
+              <input id="swipe_duration_ms" name="swipe_duration_ms" type="number" min="50" max="3000" />
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Khác</legend>
+            <label class="check"> <input id="debug" name="debug" type="checkbox" /> Lưu overlay debug </label>
+            <label class="check locked"> <input id="allow_diamond_spending" type="checkbox" disabled /> Cho phép tiêu diamond (khoá) </label>
+          </fieldset>
+          <div class="form-actions">
+            <span id="config-dirty" class="dirty-note" hidden>● Có thay đổi chưa lưu</span>
+            <button id="config-reset" class="btn" type="button" disabled>Hoàn tác</button>
+            <button class="btn primary" type="submit">Lưu cấu hình</button>
+          </div>
         </form>
       </section>
 
@@ -311,7 +429,7 @@
           <button class="btn" type="button" data-run="detect">Nhận diện</button>
           <button class="btn" type="button" data-run="back">Back</button>
           <button class="btn" type="button" data-run="home">Home</button>
-          <button class="btn" type="button" data-run="restart_game">Khởi động lại game</button>
+          <button class="btn" type="button" data-run="restart_game" data-confirm="Tắt hẳn game rồi mở lại? Bot sẽ đợi tới khi thấy nông trại." data-confirm-ok="Khởi động lại">Khởi động lại game</button>
         </div>
         <div class="row wrap pan">
           <span class="muted">Camera</span>
@@ -409,10 +527,14 @@
           </div>
         </div>
         <p class="muted">Để trống ô ảnh thì giữ file cũ. Shop dùng khi mua trong nhà; báo dùng khi quét tin Daily Dirt.</p>
-        <div class="modal-actions">
-          <button id="item-edit-cancel" class="btn" type="button">Huỷ</button>
-          <button class="btn primary" type="submit">Lưu</button>
+        <div class="modal-actions split">
+          <button id="item-edit-delete" class="btn danger" type="button">Xoá vật phẩm</button>
+          <div class="row">
+            <button id="item-edit-cancel" class="btn" type="button">Huỷ</button>
+            <button class="btn primary" type="submit">Lưu</button>
+          </div>
         </div>
+        <button class="modal-x" type="button" aria-label="Đóng" title="Đóng">✖</button>
       </form>
     </dialog>
 
@@ -428,6 +550,20 @@
       <div class="modal-actions">
         <button id="library-picker-cancel" class="btn" type="button">Huỷ</button>
       </div>
+      <button class="modal-x" type="button" aria-label="Đóng" title="Đóng">✖</button>
+    </dialog>
+
+    <dialog id="share-modal" class="modal">
+      <h3>Xem trên điện thoại</h3>
+      <p class="muted">Điện thoại phải cùng mạng Wi-Fi/LAN với máy tính. Quét mã QR hoặc mở link.</p>
+      <canvas id="share-qr" class="share-qr" width="220" height="220" hidden></canvas>
+      <ul id="share-list" class="share-list"></ul>
+      <p id="share-note" class="muted"></p>
+      <p class="muted share-warn">Không có mật khẩu: ai trong cùng mạng mở link cũng điều khiển được bot. Nếu điện thoại không vào được, cho phép Python qua Windows Firewall (mạng Private).</p>
+      <div class="modal-actions">
+        <button id="share-close" class="btn" type="button">Đóng</button>
+      </div>
+      <button class="modal-x" type="button" aria-label="Đóng" title="Đóng">✖</button>
     </dialog>
 
     <dialog id="buy-history-modal" class="modal">
@@ -437,8 +573,22 @@
       <div class="modal-actions">
         <button id="buy-history-close" class="btn" type="button">Đóng</button>
       </div>
+      <button class="modal-x" type="button" aria-label="Đóng" title="Đóng">✖</button>
     </dialog>
 
+    <dialog id="confirm-modal" class="modal confirm-modal">
+      <form method="dialog">
+        <h3 id="confirm-title">Xác nhận</h3>
+        <p id="confirm-message" class="muted"></p>
+        <div class="modal-actions">
+          <button class="btn" type="submit" value="cancel">Huỷ</button>
+          <button id="confirm-ok" class="btn danger" type="submit" value="ok">Xoá</button>
+        </div>
+        <button class="modal-x" type="button" aria-label="Đóng" title="Đóng">✖</button>
+      </form>
+    </dialog>
+
+    <script src="/static/qrcode.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

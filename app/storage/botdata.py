@@ -49,6 +49,10 @@ def column_path() -> Path:
     return data_dir() / "column.json"
 
 
+def run_prefs_path() -> Path:
+    return data_dir() / "run_prefs.json"
+
+
 MAX_PURCHASES = 200
 BUY_PROOF_RE = re.compile(r"^buy_[0-9]{1,6}$")
 
@@ -126,8 +130,28 @@ def list_purchases(limit: int = 80) -> list[dict]:
     return load_purchases()[:cap]
 
 
+def buys_revision() -> str:
+    """Changes whenever wishlist_buy_status() could: a stat of its two files.
+
+    The page polls every second; this lets it skip re-reading purchases.json
+    and every item PNG when nothing was bought or edited.
+    """
+    stamps = []
+    for path in (purchases_path(), wishlist_path()):
+        try:
+            stat = path.stat()
+            stamps.append(f"{stat.st_mtime_ns:x}.{stat.st_size:x}")
+        except OSError:
+            stamps.append("-")
+    return "-".join(stamps)
+
+
 def wishlist_buy_status() -> list[dict]:
-    """Enabled wishlist items with stall-match and verified-buy history."""
+    """Every wishlist item with stall-match and verified-buy history.
+
+    Disabled items stay in: turning an item off must not hide what was
+    already bought. The page decides which rows to show.
+    """
     matches: dict[str, list[dict]] = {}
     buys: dict[str, list[dict]] = {}
     for row in load_purchases():
@@ -143,8 +167,6 @@ def wishlist_buy_status() -> list[dict]:
             matches.setdefault(item, []).append(event)
     rows: list[dict] = []
     for entry in wishlist_entries():
-        if not entry.get("enabled", True):
-            continue
         item_id = entry["id"]
         match_rows = matches.get(item_id, [])
         buy_rows = buys.get(item_id, [])
@@ -152,6 +174,7 @@ def wishlist_buy_status() -> list[dict]:
         rows.append(
             {
                 "id": item_id,
+                "enabled": entry["enabled"],
                 "template": entry["template"],
                 "news_template": entry["news_template"],
                 "has_image": entry["has_image"],
@@ -248,6 +271,62 @@ def save_wishlist(wishlist: dict) -> Path:
 def active_wishlist(wishlist: dict | None = None) -> dict:
     data = wishlist if wishlist is not None else load_wishlist()
     return {key: spec for key, spec in data.items() if spec.get("enabled", True)}
+
+
+def set_items_enabled(item_ids: list[str], enabled: bool) -> int:
+    """Turn buying on or off for several items in one write; returns how many
+    changed. Unknown ids fail the whole call so nothing is half applied."""
+    wishlist = load_wishlist()
+    keys = [clean_id(str(raw)) for raw in item_ids]
+    missing = [key for key in keys if key not in wishlist]
+    if missing:
+        raise ValueError(f"item {missing[0]} not found")
+    changed = 0
+    for key in keys:
+        if wishlist[key].get("enabled", True) != bool(enabled):
+            wishlist[key]["enabled"] = bool(enabled)
+            changed += 1
+    save_wishlist(wishlist)
+    return changed
+
+
+RUN_NEWS_MODES = ("follow", "sweep")
+RUN_MAX_LIMIT = 20
+
+
+def load_run_prefs() -> dict:
+    """The loop setup last picked on the control page, so a reload or a second
+    device starts from the same boxes ticked."""
+    return _normalize_run_prefs(load_json(run_prefs_path()))
+
+
+def save_run_prefs(payload: dict) -> dict:
+    prefs = _normalize_run_prefs({**load_run_prefs(), **payload})
+    save_json(run_prefs_path(), prefs)
+    return prefs
+
+
+def _normalize_run_prefs(raw: dict) -> dict:
+    news_mode = str(raw.get("news_mode") or "sweep")
+    crop = str(raw.get("crop") or "wheat").strip().lower()
+    try:
+        limit = int(raw.get("limit", RUN_MAX_LIMIT))
+    except (TypeError, ValueError):
+        limit = RUN_MAX_LIMIT
+    rest = raw.get("loop_rest_min")
+    try:
+        rest = float(rest)
+    except (TypeError, ValueError):
+        rest = float(app_config.load_config().loop_rest_min)
+    return {
+        "harvest": bool(raw.get("harvest", False)),
+        "plant": bool(raw.get("plant", False)),
+        "newspaper": bool(raw.get("newspaper", True)),
+        "news_mode": news_mode if news_mode in RUN_NEWS_MODES else "sweep",
+        "crop": crop if ID_RE.fullmatch(crop) else "wheat",
+        "limit": max(1, min(RUN_MAX_LIMIT, limit)),
+        "loop_rest_min": max(0.0, min(180.0, rest)),
+    }
 
 
 def load_crops() -> dict:
