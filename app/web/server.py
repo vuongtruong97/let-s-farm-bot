@@ -525,9 +525,14 @@ def listen_urls(host: str, port: int) -> list[str]:
     return [f"http://{host}:{port}"]
 
 
-def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
+def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> BotHTTPServer:
+    """Bound but not yet serving; the tray runs it on a thread of its own."""
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
-    httpd = BotHTTPServer((host, port), BotWebHandler)
+    return BotHTTPServer((host, port), BotWebHandler)
+
+
+def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
+    httpd = make_server(host, port)
     print("Web UI", flush=True)
     for url in listen_urls(host, port):
         print(f"  {url}", flush=True)
