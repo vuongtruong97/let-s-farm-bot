@@ -1,3 +1,4 @@
 pillow>=11.0.0
 numpy>=2.0.0
 opencv-python>=4.10.0
+pystray>=0.19.5

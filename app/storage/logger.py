@@ -21,7 +21,8 @@ class ActionFormatter(logging.Formatter):
         return f"{stamp} [{component}] {record.getMessage()}"
 
 
-def setup_logging(config: AppConfig | None = None) -> logging.Logger:
+def setup_logging(config: AppConfig | None = None, console: bool = True) -> logging.Logger:
+    """console=False for the tray app: pythonw has no console to write to."""
     global _CONFIGURED
     logger = logging.getLogger("farmbot")
     if _CONFIGURED:
@@ -29,10 +30,11 @@ def setup_logging(config: AppConfig | None = None) -> logging.Logger:
     logger.setLevel(logging.DEBUG)
     formatter = ActionFormatter()
 
-    console = logging.StreamHandler()
-    console.setLevel(logging.INFO)
-    console.setFormatter(formatter)
-    logger.addHandler(console)
+    if console:
+        stream = logging.StreamHandler()
+        stream.setLevel(logging.INFO)
+        stream.setFormatter(formatter)
+        logger.addHandler(stream)
 
     cfg = config or AppConfig()
     log_path = cfg.log_dir() / "bot.log"

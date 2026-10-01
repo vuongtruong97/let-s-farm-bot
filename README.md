@@ -20,6 +20,13 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+**Chạy hằng ngày:** double-click `farm_bot.bat`.
+- Bot chạy ngầm, không có cửa sổ đen, và trình duyệt tự mở trang điều khiển.
+- Icon 🌾 nằm cạnh đồng hồ Windows: bấm để mở lại trang, rê chuột để xem bot đang làm gì, chuột phải để mở thư mục log hoặc **Thoát**.
+- Mở lại khi bot đang chạy thì chỉ mở trang web.
+- Thư viện chỉ cài lại khi `requirements.txt` thay đổi.
+- Cần xem log chạy trực tiếp thì thoát bản ở khay rồi chạy `farm_bot_console.bat`.
+
 ## M0 — Device controller
 
 ```bash

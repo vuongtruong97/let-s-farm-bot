@@ -57,7 +57,7 @@
   "cua": {
     "template": "item_cua",
     "news_template": "item_cua_news",
-    "enabled": false
+    "enabled": true
   },
   "ao": {
     "template": "item_ao",
@@ -77,7 +77,7 @@
   "pho_mai": {
     "template": "item_pho_mai",
     "news_template": "item_pho_mai_news",
-    "enabled": true
+    "enabled": false
   },
   "xeng": {
     "template": "item_xeng",
@@ -122,7 +122,7 @@
   "duong_trang": {
     "template": "item_duong_trang",
     "news_template": "item_duong_trang_news",
-    "enabled": false
+    "enabled": true
   },
   "bat_kem": {
     "template": "item_bat_kem",
@@ -187,7 +187,7 @@
   "siro": {
     "template": "item_siro",
     "news_template": "item_siro_news",
-    "enabled": true
+    "enabled": false
   },
   "duong_nau": {
     "template": "item_duong_nau",
